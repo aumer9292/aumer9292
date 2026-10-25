@@ -36,6 +36,7 @@ button,input,select{font:inherit;color:inherit}
 header.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
 .brand{display:flex;flex-direction:column;min-width:0}
 .brand h1{margin:0;font-family:var(--doc);font-size:24px;font-weight:700;letter-spacing:-.01em}
+.ver{font:500 11px var(--mono);color:var(--muted);letter-spacing:0;vertical-align:middle;margin-left:6px}
 .brand p{margin:0;color:var(--muted);font-size:13px}
 .top .actions{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
 
@@ -131,7 +132,7 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
 <div class="wrap">
   <header class="top">
     <div class="brand">
-      <h1>Clean Copy</h1>
+      <h1>Clean Copy <span class="ver">version 8 · bold from scans</span></h1>
       <p>Turn photos and scans of notes into a clean document you can edit. Text is read on your device, nothing is uploaded.</p>
     </div>
     <div class="actions">
@@ -21337,7 +21338,7 @@ function loadImage(file){
       const w = img.naturalWidth, h = img.naturalHeight, s = fitScale(w, h);
       const c = whiteCanvas(w * s, h * s), g = c.getContext('2d');
       g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-      res({ src: c.toDataURL('image/jpeg', 0.92), W: c.width, H: c.height, canvas: c });
+      res({ src: c.toDataURL('image/jpeg', 0.92), W: c.width, H: c.height, canvas: c, scale: s });
     };
     img.onerror = () => rej(new Error('This file could not be opened as an image.'));
     img.src = url;
@@ -21364,7 +21365,7 @@ function pdfTextLines(items, page, vp){
     const t = pdfjsLib.Util.transform(vp.transform, it.transform);
     const fh = Math.hypot(t[2], t[3]) || 10, x = t[4], base = t[5], w = it.width * vp.scale;
     let bold = false;
-    try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); bold = !!f && /bold|black|heavy|semibold/i.test(f.name || ''); } catch {}
+    try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); bold = !!f && (f.bold || f.black || /bold|black|heavy|semibold|demi/i.test(f.name || '')); } catch {}
     parts.push({ str: it.str, x, x1: x + w, base, fh, bold });
   }
   parts.sort((a, b) => a.base - b.base || a.x - b.x);
@@ -21415,6 +21416,7 @@ async function addPdf(file){
     state.pages.push(p); state.cur = state.pages.length - 1;
     if (chars >= 25) {   // a real text layer: exact text, nothing to guess
       p.regions = groupLines(lines, p.W, p.H); p.busy = false; p.exact = true;
+      if (!lines.some(l => l.words.some(w => w.bold))) markBold(p.regions, c, 1);   // some PDFs do not name their bold fonts
       renderAll();
     } else {             // a scanned page: read the picture
       renderAll(); queue = queue.then(() => ocrPage(p, c));
@@ -21429,7 +21431,7 @@ async function addFiles(files){
   for (const f of files) {
     if (isPdf(f)) { await addPdf(f); continue; }
     let im; try { im = await loadImage(f); } catch (e) { toast(e.message); continue; }
-    const p = { id: ++uid, src: im.src, W: im.W, H: im.H, regions: [], busy: true };
+    const p = { id: ++uid, src: im.src, W: im.W, H: im.H, regions: [], busy: true, scale: im.scale };
     state.pages.push(p); state.cur = state.pages.length - 1; renderAll();
     queue = queue.then(() => ocrPage(p, im.canvas));
   }
@@ -21457,28 +21459,26 @@ function strokeOf(g, x0, y0, x1, y1){
   const band = runs.slice(Math.floor(runs.length * 0.2), Math.ceil(runs.length * 0.65));
   return band.reduce((a, b) => a + b, 0) / band.length;
 }
-function markBold(regions, canvas){
+// scale: how much the page was enlarged from the original file (letters under ~9 px there carry too little detail)
+function markBold(regions, canvas, scale = 1){
   const g = canvas.getContext('2d', { willReadFrequently: true }), all = [];
   for (const r of regions) for (const l of r.lines) {
-    const ht = l.bbox.y1 - l.bbox.y0;
     for (const w of l.words) {
       if (w.x0 == null || w.t.replace(/[^A-Za-z0-9]/g, '').length < 3) continue;
       const sw = strokeOf(g, w.x0, l.bbox.y0, w.x1, l.bbox.y1);
-      if (sw) all.push({ w, v: sw / r.fs });
+      if (sw) all.push({ w, v: sw / r.fs, fs: r.fs });
     }
   }
   if (all.length < 8) return false;
-  const vals = all.map(a => a.v), typical = median(vals);
+  if (median(all.map(a => a.fs)) / scale < 8.5) return false;
+  // typical normal text: the middle of the lighter 60% of words
+  const vals = all.map(a => a.v), sorted = [...vals].sort((a, b) => a - b);
+  const ref = median(sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.6))));
   // only trust it on a sharp page, where normal words all measure alike
-  const reg = vals.filter(v => v <= typical * 1.2), mean = reg.reduce((a, b) => a + b, 0) / reg.length;
+  const reg = vals.filter(v => v <= ref * 1.2), mean = reg.reduce((a, b) => a + b, 0) / reg.length;
   const cv = Math.sqrt(reg.reduce((a, b) => a + (b - mean) ** 2, 0) / reg.length) / mean;
-  if (cv > 0.15) return false;
-  // split normal from bold at the biggest jump in stroke width; no clear jump means no bold on the page
-  const up = vals.filter(v => v >= typical).sort((a, b) => a - b);
-  let cut = 0, best = 1.15;
-  for (let i = 1; i < up.length; i++) { const j = up[i] / up[i - 1]; if (j > best && up[i] > typical * 1.25) { best = j; cut = Math.sqrt(up[i] * up[i - 1]); } }
-  if (!cut) return false;
-  for (const a of all) { a.w.bold = a.v > cut; a.w.measured = true; }
+  if (cv > 0.13) return false;
+  for (const a of all) { a.w.bold = a.v > ref * 1.35; a.w.measured = true; }
   // short words ("to", "of", "&") between two bold words are bold too
   for (const r of regions) for (const l of r.lines) for (const sg of (l.segs || [{ words: l.words }])) sg.words.forEach((w, i, ws) => {
     if (w.measured) return;
@@ -21493,7 +21493,7 @@ async function ocrPage(p, canvas){
     setProgress('Reading text…', 0);
     const { data } = await w.recognize(canvas, {}, { blocks: true, text: false });
     p.regions = buildRegions(data.blocks, p.W, p.H); p.busy = false;
-    p.boldFound = markBold(p.regions, canvas);
+    p.boldFound = markBold(p.regions, canvas, p.scale || 1);
     window.__boldDone = (window.__boldDone || 0) + 1;
     if (!p.regions.length) p.error = 'No text was found in this image. Try a sharper, well-lit photo.';
   } catch (e) {
