@@ -1,0 +1,48 @@
+NORTHWIND TRADING LIMITED
+STATEMENT OF FINANCIAL POSITION
+AS AT 31 DECEMBER 2025
+
+                                               Note        2025        2024
+                                                          $'000       $'000
+ASSETS                                                                     
+Non-current assets                                                         
+Property, plant and equipment                     5       12500       11800
+Intangible assets                                 6       1,250       1,400
+                                                          13750      13,200
+Current assets                                                             
+Inventories                                       7       3,420       3,100
+Trade and other recievables                       8       2,880       2,640
+Cash and cash equivalents                         9       1,950       1,460
+                                                          8,250       7,200
+Total assets                                             22,000      20,400
+EQUITY AND LIABILITIES                                                     
+Equity                                                                     
+Share capital                                    10       5,000       5,000
+Retained earnings                                         9,600       8,100
+Total equity                                             14,600      13,100
+Non-current liabilities                                                    
+Borrowings                                       11       3,500       4,000
+Current liabilities                                                        
+Trade and other payables                         12       3,100       2,700
+Current tax liability                                       800         600
+                                                          3,900       3,300
+Total liabilities                                         7,400       7,300
+Total equity and liabilities                             22,000      20,400
+
+STATEMENT OF PROFIT OR LOSS
+FOR THE YEAR ENDED 31 DECEMBER 2025
+
+                                               Note        2025        2024
+                                                          $'000       $'000
+Revenue                                          13      28,400      25,900
+Cost of sales                                          (17,900)    (16,500)
+Gross profit                                             10,500       9,400
+Administrative expenses                                  -5,200     (4,900)
+Distribution costs                                      (2,100)     (1,950)
+Operating profit                                          3,200       2,550
+Finance costs                                             (350)       (400)
+Profit before tax                                         2,850       2,150
+Income tax expense                               14       (850)       (650)
+Profit for the year                                       2,000       1,500
+Other comprehensive income                                    0           -
+Total comprehensive income for the year                   2,000       1,500

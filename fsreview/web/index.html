@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FS Review</title>
+<style>
+/* A reviewer's desk: engagement settings on the left, findings on the right. */
+:root{
+  --bg:#f3f4f6; --panel:#fff; --ink:#1a2230; --muted:#5b6575; --line:#d8dde5; --soft:#eef1f6;
+  --accent:#1f4e9c; --accent-ink:#fff; --accent-soft:#e3ebf8;
+  --err:#b3261e; --err-soft:#fbe9e7; --warn:#8a5a00; --warn-soft:#fff3d6; --info:#2f5496; --info-soft:#e7eefb;
+  --ok:#256c2e; --ok-soft:#e5f3e7;
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; --num:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12161d; --panel:#1a2029; --ink:#e4e8ee; --muted:#9aa5b5; --line:#313a47; --soft:#222a35;
+  --accent:#7ea2ff; --accent-ink:#0d1422; --accent-soft:#25324d;
+  --err:#ff8a80; --err-soft:#3a1f1d; --warn:#f5c26b; --warn-soft:#3a2f17; --info:#9bb7ff; --info-soft:#1e2a44;
+  --ok:#8fd19a; --ok-soft:#1c3322; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161d; --panel:#1a2029; --ink:#e4e8ee; --muted:#9aa5b5; --line:#313a47; --soft:#222a35;
+  --accent:#7ea2ff; --accent-ink:#0d1422; --accent-soft:#25324d;
+  --err:#ff8a80; --err-soft:#3a1f1d; --warn:#f5c26b; --warn-soft:#3a2f17; --info:#9bb7ff; --info-soft:#1e2a44;
+  --ok:#8fd19a; --ok-soft:#1c3322; color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--ui)}
+button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:1380px;margin:0 auto;padding:16px 16px 48px;display:grid;gap:14px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+header h1{margin:0;font-size:22px;letter-spacing:-.01em}
+header p{margin:0;color:var(--muted)}
+.ver{font:12px var(--num);color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:14px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h2{font-size:15px;margin:0 0 10px}
+.card h3{font-size:13px;margin:14px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+label{display:block;font-size:12.5px;color:var(--muted);margin:8px 0 3px}
+input[type=text],input[type=number],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}
+textarea{min-height:52px;resize:vertical}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.check{display:flex;gap:8px;align-items:flex-start;margin:7px 0;color:var(--ink);font-size:13.5px}
+.check input{margin-top:3px}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;cursor:pointer;background:var(--soft)}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop strong{display:block;margin-bottom:2px}
+.drop small{color:var(--muted)}
+.file{font-size:13px;margin-top:6px;word-break:break-all}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;padding:10px 16px;
+  background:var(--accent);color:var(--accent-ink);font-weight:600;cursor:pointer;width:100%;margin-top:14px}
+.btn[disabled]{opacity:.55;cursor:progress}
+.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);width:auto;margin:0;padding:6px 10px;font-weight:500}
+.empty{color:var(--muted);text-align:center;padding:60px 20px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media (max-width:560px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tile{border-radius:9px;padding:10px 12px;border:1px solid var(--line)}
+.tile b{display:block;font:600 24px var(--num)}
+.tile span{font-size:12.5px}
+.t-err{background:var(--err-soft);color:var(--err)} .t-warn{background:var(--warn-soft);color:var(--warn)}
+.t-info{background:var(--info-soft);color:var(--info)} .t-ok{background:var(--ok-soft);color:var(--ok)}
+.verdict{margin:12px 0 0;padding:10px 12px;border-radius:8px;font-weight:600}
+.downloads{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.downloads a{text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--ink);background:var(--soft);font-weight:500}
+.downloads a:hover{border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:12px;padding:3px 8px;border-radius:99px;background:var(--soft);border:1px solid var(--line)}
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.filters button{border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:4px 10px;cursor:pointer;font-size:12.5px}
+.filters button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.cat{margin-top:14px}
+.cat h3{display:flex;justify-content:space-between}
+.issue{display:grid;grid-template-columns:78px 1fr;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.badge{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;border-radius:5px;padding:2px 6px;height:fit-content;text-align:center}
+.b-error{background:var(--err-soft);color:var(--err)} .b-warning{background:var(--warn-soft);color:var(--warn)}
+.b-info{background:var(--info-soft);color:var(--info)} .b-passed{background:var(--ok-soft);color:var(--ok)}
+.issue p{margin:0}
+.issue .meta{color:var(--muted);font-size:12.5px;margin-top:2px}
+.issue .fix{font-size:12.5px;margin-top:3px}
+table.changes{width:100%;border-collapse:collapse;font-size:12.5px}
+table.changes th,table.changes td{border-top:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+table.changes td.num{font-family:var(--num)}
+details summary{cursor:pointer;font-weight:600;margin-top:14px}
+.err-box{background:var(--err-soft);color:var(--err);padding:10px 12px;border-radius:8px;margin-top:10px}
+.spinner{width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>FS Review</h1><span class="ver" id="ver"></span>
+    <p>Format, proofread and review a complete set of financial statements. Figures and wording are never changed silently.</p>
+  </header>
+  <div class="grid">
+    <form class="card" id="form">
+      <h2>1. Financial statements</h2>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose file">
+        <strong>Drop the draft here or click to choose</strong>
+        <small>Word, Excel, PDF or text</small>
+        <div class="file" id="fname"></div>
+      </div>
+      <input type="file" id="file" accept=".docx,.docm,.xlsx,.xlsm,.xls,.pdf,.txt" hidden>
+      <label for="ref">Approved prior-year set to copy the house style from (optional, .docx)</label>
+      <input type="file" id="ref" accept=".docx">
+
+      <h3>Engagement</h3>
+      <label for="entity_name">Entity name</label><input type="text" id="entity_name" placeholder="e.g. Northwind Trading Limited">
+      <div class="two">
+        <div><label for="financial_year">Financial year</label><input type="number" id="financial_year" min="1990" max="2100" placeholder="2025"></div>
+        <div><label for="framework">Framework</label>
+          <select id="framework"><option>IFRS</option><option>IFRS for SMEs</option><option>US GAAP</option>
+            <option>UK GAAP (FRS 102)</option><option>IPSAS</option><option>Local GAAP</option></select></div>
+        <div><label for="jurisdiction">Jurisdiction</label><input type="text" id="jurisdiction" placeholder="e.g. Pakistan"></div>
+        <div><label for="entity_type">Entity type</label>
+          <select id="entity_type"><option>Private company</option><option>Listed company</option><option>Small company</option>
+            <option>Not-for-profit</option><option>Partnership</option><option>Public sector</option><option>Group (consolidated)</option></select></div>
+        <div><label for="currency">Presentation currency</label><input type="text" id="currency" placeholder="e.g. PKR, USD"></div>
+        <div><label for="unit">Unit</label><select id="unit"><option value="">Units</option><option>'000</option><option>million</option></select></div>
+      </div>
+
+      <h3>Formatting</h3>
+      <div class="two">
+        <div><label for="template">Template</label><select id="template"></select></div>
+        <div><label for="page_size">Page size</label><select id="page_size"><option>A4</option><option>Letter</option></select></div>
+        <div><label for="negative_style">Negative figures</label><select id="negative_style"><option value="brackets">(1,234)</option><option value="minus">-1,234</option></select></div>
+        <div><label for="zero_style">Nil figures</label><select id="zero_style"><option value="-">-</option><option value="0">0</option></select></div>
+      </div>
+      <label class="check"><input type="checkbox" id="statement_page_breaks" checked> Start each statement and report on a new page</label>
+      <label class="check"><input type="checkbox" id="header_footer" checked> Header with entity name, footer with page numbers</label>
+      <label class="check"><input type="checkbox" id="financial_borders" checked> Clean financial rules (lines on totals only)</label>
+
+      <h3>Proofreading</h3>
+      <label class="check"><input type="checkbox" id="apply_spacing_fixes" checked> Fix double spaces and spaces before punctuation</label>
+      <label class="check"><input type="checkbox" id="apply_spelling"> Correct known misspellings (each change is listed)</label>
+      <label class="check" id="ai_row"><input type="checkbox" id="ai_review"> <span>AI review of narrative text with Claude
+        (sends the narrative text to the Anthropic API) <span id="ai_note" class="note" style="display:block;margin:2px 0 0"></span></span></label>
+      <label for="custom_words">Words to accept (names, local terms)</label>
+      <textarea id="custom_words" placeholder="One per line"></textarea>
+
+      <button class="btn" id="go" type="submit">Review and format</button>
+      <div id="formerr"></div>
+      <p class="note" id="office"></p>
+    </form>
+
+    <section class="card" id="results" aria-live="polite">
+      <div class="empty" id="empty">Choose a draft and press <b>Review and format</b>.<br>
+        You will get a formatted Word file, an Excel workbook, a PDF and a review report.</div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const CATS = [["integrity","Content integrity"],["accounting","Accounting cross-checks"],["casting","Casting"],
+  ["consistency","Consistency and comparatives"],["proofreading","Proofreading"],["extraction","Items for manual review"]];
+let chosen = null, last = null, filter = "open";
+
+fetch("/api/options").then(r => r.json()).then(o => {
+  $("ver").textContent = "v" + o.version;
+  for (const [k, v] of Object.entries(o.templates)) $("template").add(new Option(v, k));
+  if (!o.ai_available) { $("ai_review").disabled = true; $("ai_note").textContent = "(install the 'anthropic' package to enable)"; }
+  $("office").textContent = o.office ? "PDF will be produced with LibreOffice (exact Word layout)."
+                                     : "LibreOffice not found: the PDF will use a simplified layout.";
+  try { const saved = JSON.parse(localStorage.getItem("fsr-settings") || "{}");
+        for (const [k, v] of Object.entries(saved)) { const el = $(k); if (!el) continue;
+          if (el.type === "checkbox") el.checked = !!v; else el.value = v; } } catch (e) {}
+});
+
+const drop = $("drop"), file = $("file");
+drop.onclick = () => file.click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); file.click(); } };
+file.onchange = () => pick(file.files[0]);
+["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => pick(e.dataTransfer.files[0]));
+function pick(f) { if (!f) return; chosen = f; $("fname").textContent = f.name + " · " + (f.size / 1024).toFixed(0) + " KB"; }
+
+function settings() {
+  const ids = ["entity_name","financial_year","framework","jurisdiction","entity_type","currency","unit","template",
+    "page_size","negative_style","zero_style","statement_page_breaks","header_footer","apply_spacing_fixes",
+    "apply_spelling","ai_review","custom_words","financial_borders"];
+  const s = {};
+  for (const id of ids) { const el = $(id); s[id] = el.type === "checkbox" ? el.checked : el.value.trim(); }
+  try { localStorage.setItem("fsr-settings", JSON.stringify(s)); } catch (e) {}
+  s.table_borders = s.financial_borders ? "financial" : "keep"; delete s.financial_borders;
+  return s;
+}
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  $("formerr").innerHTML = "";
+  if (!chosen) { $("formerr").innerHTML = '<div class="err-box">Choose the financial statements file first.</div>'; return; }
+  const fd = new FormData();
+  fd.append("file", chosen);
+  if ($("ref").files[0]) fd.append("reference", $("ref").files[0]);
+  fd.append("settings", JSON.stringify(settings()));
+  const btn = $("go"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Reviewing…';
+  try {
+    const r = await fetch("/api/review", { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Processing failed");
+    last = data; filter = "open"; render();
+  } catch (err) {
+    $("formerr").innerHTML = '<div class="err-box">' + esc(err.message) + "</div>";
+  } finally { btn.disabled = false; btn.textContent = "Review and format"; }
+};
+
+function render() {
+  const d = last, s = d.summary;
+  const verdict = s.error ? ["t-err", `${s.error} error(s) must be resolved or explained before the statements are finalised.`]
+               : s.warning ? ["t-warn", "No errors found. Review the warnings below before finalising."]
+               : ["t-ok", "No errors or warnings found."];
+  const files = Object.entries(d.outputs).map(([k, v]) =>
+      `<a href="/api/file/${d.job}/${encodeURIComponent(v)}">${esc(k)} ↓</a>`).join("");
+  const counts = Object.entries(d.changes.counts).map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("");
+  let html = `<h2>${esc(d.source)}</h2>
+    <div class="tiles">
+      <div class="tile t-err"><b>${s.error}</b><span>Errors</span></div>
+      <div class="tile t-warn"><b>${s.warning}</b><span>Warnings</span></div>
+      <div class="tile t-info"><b>${s.info}</b><span>For information</span></div>
+      <div class="tile t-ok"><b>${s.passed}</b><span>Checks passed</span></div>
+    </div>
+    <div class="verdict ${verdict[0]}">${esc(verdict[1])}</div>
+    <div class="downloads">${files}</div>
+    <h3>Sections identified</h3><div class="chips">${d.sections.map(x => `<span class="chip">${esc(x)}</span>`).join("") || "None"}</div>
+    ${d.notes.length ? "<p class='note'>" + d.notes.map(esc).join("<br>") + "</p>" : ""}
+    <h3>Findings</h3>
+    <div class="filters" role="group" aria-label="Filter findings">
+      ${[["open","To review"],["error","Errors"],["warning","Warnings"],["passed","Passed"],["all","All"]].map(([k, l]) =>
+        `<button type="button" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
+    </div>`;
+  for (const [cat, title] of CATS) {
+    const items = d.issues.filter(i => i.category === cat).filter(i =>
+      filter === "all" ? true : filter === "passed" ? i.status === "passed" :
+      filter === "open" ? i.status !== "passed" : (i.status !== "passed" && i.severity === filter));
+    if (!items.length) continue;
+    html += `<div class="cat"><h3><span>${title}</span><span>${items.length}</span></h3>` + items.map(i => {
+      const b = i.status === "passed" ? "passed" : i.severity;
+      return `<div class="issue"><span class="badge b-${b}">${b === "passed" ? "OK" : b}</span><div>
+        <p>${esc(i.message)}</p>
+        ${(i.section || i.location) ? `<div class="meta">${esc([i.section, i.location].filter(Boolean).join(" · "))}</div>` : ""}
+        ${i.suggestion ? `<div class="fix">→ ${esc(i.suggestion)}</div>` : ""}</div></div>`; }).join("") + "</div>";
+  }
+  html += `<details><summary>Formatting applied</summary><div class="chips">${counts || "None"}</div>`;
+  if (d.changes.edits.length) {
+    html += `<table class="changes"><thead><tr><th>Where</th><th>Before</th><th>After</th><th>Why</th></tr></thead><tbody>` +
+      d.changes.edits.slice(0, 400).map(e => `<tr><td>${esc(e.location)}</td><td class="num">${esc(e.before)}</td>
+        <td class="num">${esc(e.after)}</td><td>${esc(e.reason)}</td></tr>`).join("") + "</tbody></table>";
+  }
+  html += "</details>";
+  $("results").innerHTML = html;
+  $("results").querySelectorAll(".filters button").forEach(b => b.onclick = () => { filter = b.dataset.f; render(); });
+}
+</script>
+</body>
+</html>

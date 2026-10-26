@@ -1,0 +1,10 @@
+python-docx>=1.1
+openpyxl>=3.1
+pdfplumber>=0.11
+reportlab>=4.0
+pypdfium2>=4.0
+# optional
+xlrd>=2.0          # .xls input
+# pytesseract      # OCR for scanned PDFs (also needs the Tesseract program)
+# anthropic        # AI review of narrative text with Claude
+# pyspellchecker   # wider spelling check for words outside the built-in list
