@@ -215,6 +215,22 @@ def _reorder_tcpr(tcpr):
         tcpr.append(k)
 
 
+_PPR_ORDER = ["pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+              "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+              "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid",
+              "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection",
+              "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange"]
+
+
+def _reorder_ppr(ppr):
+    kids = list(ppr)
+    kids.sort(key=lambda k: _PPR_ORDER.index(k.tag.split("}")[1]) if k.tag.split("}")[1] in _PPR_ORDER else 99)
+    for k in list(ppr):
+        ppr.remove(k)
+    for k in kids:
+        ppr.append(k)
+
+
 _TBLPR_ORDER = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize",
                 "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook",
                 "tblCaption", "tblDescription", "tblPrChange"]
@@ -282,7 +298,7 @@ def format_document(d, model, settings, changes=None, from_word=True):
                 if target is not None and target != idx and block.section in PRIMARY:
                     # the entity name above a statement title is part of the title block
                     tp = items[target]
-                    tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    tp.alignment = _title_alignment(settings)
                     tp.paragraph_format.keep_with_next = True
                     tp.paragraph_format.space_after = Pt(2)
                     for r in tp.runs:
@@ -300,11 +316,72 @@ def format_document(d, model, settings, changes=None, from_word=True):
             # space after a table before the next paragraph
             if idx + 1 < len(items) and model.blocks[idx + 1].kind == "paragraph":
                 items[idx + 1].paragraph_format.space_before = Pt(settings["space_after_pt"] + 2)
+    if settings["style"].get("annexed_notes") or settings["style"].get("signatures"):
+        _statement_endings(d, items, model.blocks, settings, changes, entity)
     for el in to_delete:
         el.getparent().remove(el)
     if settings.get("header_footer"):
         _header_footer(d, settings, changes)
     return changes
+
+
+def _statement_endings(d, items, blocks, settings, changes, entity):
+    """Big 4 finish for each primary statement: the 'annexed notes form an integral part' line
+    and the signature block, added only where the draft does not already have them."""
+    st = settings["style"]
+    starts = []
+    for i, b in enumerate(blocks):
+        if b.kind == "paragraph" and b.role == "title" and b.section != "CONTENTS":
+            if not starts or blocks[starts[-1][1]].section != b.section:
+                s0 = _title_block_start(items, blocks, i, entity)
+                starts.append((i if s0 is None else s0, i))
+    last_note = max([int(b.note_number) for b in blocks if b.kind == "paragraph" and b.role == "note_heading"
+                     and b.note_number and b.note_number.isdigit()] + [0])
+    signers = ["Chief Executive", "Director"]
+    if settings.get("category") == "PIC":
+        signers.append("Chief Financial Officer")
+    for k, (begin, title_idx) in enumerate(starts):
+        sec = blocks[title_idx].section
+        if sec not in PRIMARY:
+            continue
+        end = starts[k + 1][0] - 1 if k + 1 < len(starts) else len(blocks) - 1
+        span = blocks[title_idx:end + 1]
+        text = "\n".join(b.text if b.kind == "paragraph" else " ".join(" ".join(r.cells) for r in b.rows)
+                         for b in span)
+        if not any(b.kind == "table" for b in span):
+            continue
+        anchor = end
+        while anchor > title_idx and (blocks[anchor].kind == "paragraph" and not blocks[anchor].text.strip()):
+            anchor -= 1
+        el = items[anchor]._element
+        if st.get("annexed_notes") and last_note and not re.search(r"annexed notes|integral part", text, re.I):
+            line = f"The annexed notes 1 to {last_note} form an integral part of these financial statements."
+            p = d.add_paragraph()
+            r = p.add_run(line)
+            _set_run_font(r, st["font"], st["size"] - 1 if st["size"] > 9 else st["size"], st["color"])
+            p.paragraph_format.space_before = Pt(10)
+            el.addnext(p._p)
+            el = p._p
+            changes.edit(blocks[title_idx].source, "", line, "Annexed-notes statement added")
+        if st.get("signatures") and not re.search(r"chief executive|director\b.*\n?.*(?:signature|sd/)", text, re.I):
+            tbl = d.add_table(rows=2, cols=len(signers))
+            for c, who in enumerate(signers):
+                top, bottom = tbl.cell(0, c), tbl.cell(1, c)
+                top.paragraphs[0].paragraph_format.space_before = Pt(42)
+                para = bottom.paragraphs[0]
+                r = para.add_run(who)
+                _set_run_font(r, st["font"], st["size"], st["color"], bold=True)
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                para.paragraph_format.left_indent = para.paragraph_format.right_indent = Cm(0.6)
+                _border(para._p.get_or_add_pPr(), "w:pBdr", {"top": ("single", 4)})
+                _reorder_ppr(para._p.get_or_add_pPr())
+            tblpr = tbl._tbl.tblPr
+            _border(tblpr, "w:tblBorders", {e: None for e in ("top", "left", "bottom", "right", "insideH", "insideV")})
+            _reorder_tblpr(tblpr)
+            for row in tbl.rows:
+                _row_flag(row, "w:cantSplit")
+            el.addnext(tbl._tbl)
+            changes.edit(blocks[title_idx].source, "", "  ".join(signers), "Signature block added")
 
 
 def _title_block_start(items, blocks, idx, entity):
@@ -358,6 +435,7 @@ def _page_setup(d, settings, changes):
         sec.bottom_margin = Cm(settings["margin_bottom_cm"])
         sec.left_margin = Cm(settings["margin_left_cm"])
         sec.right_margin = Cm(settings["margin_right_cm"])
+        sec.gutter = Cm(settings.get("gutter_cm") or 0)
         sec.header_distance = Cm(1.2)
         sec.footer_distance = Cm(1.2)
     changes.add("Page size and margins standardised")
@@ -423,16 +501,18 @@ def _format_paragraph(p, block, settings, changes, note_style):
         for r in p.runs:
             _set_run_font(r, st["heading_font"], st["title_size"], st["heading_color"], bold=True)
             r.font.italic = False
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if block.section in PRIMARY else WD_ALIGN_PARAGRAPH.LEFT
+        p.alignment = _title_alignment(settings) if block.section in PRIMARY else WD_ALIGN_PARAGRAPH.LEFT
         pf.keep_with_next = True
         pf.space_before = Pt(0 if block.section in PRIMARY else 12)
         pf.space_after = Pt(2)
         pf.left_indent = pf.first_line_indent = None
         return
     if role in ("period", "unit"):
+        if role == "period" and st.get("period_caps") and block.section in PRIMARY + ("NOTES",):
+            _rewrite_runs(p, lambda t: t.upper(), block.source, "Statement titles capitalised", changes)
         for r in p.runs:
             _set_run_font(r, st["heading_font"], st["size"], st["heading_color"], bold=(role == "period"))
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if block.section in PRIMARY else p.alignment
+        p.alignment = _title_alignment(settings) if block.section in PRIMARY else p.alignment
         pf.keep_with_next = True
         pf.space_after = Pt(2 if role == "period" else 8)
         return
@@ -442,7 +522,7 @@ def _format_paragraph(p, block, settings, changes, note_style):
             _set_run_font(r, st["heading_font"], st["title_size"] if is_entity and block.text.isupper() else st["h1_size"],
                           st["heading_color"], bold=True)
         if block.section in PRIMARY and block.text.isupper():
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.alignment = _title_alignment(settings)
         elif p.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY:
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         pf.keep_with_next = True
@@ -462,6 +542,10 @@ def _format_paragraph(p, block, settings, changes, note_style):
                 p.runs[0].text = new_prefix + old[len(m.group(0)):]
                 changes.edit(block.source, old, p.runs[0].text, "Note numbering made consistent")
         sub = block.note_number and "." in block.note_number
+        if st.get("note_caps") and not sub:
+            _rewrite_runs(p, lambda t: t.upper(), block.source, "Note headings capitalised", changes)
+        if st.get("note_indent_cm"):
+            _hang_number(p, st["note_indent_cm"])
         for r in p.runs:
             _set_run_font(r, st["heading_font"], st["h2_size"] if sub else st["h1_size"], st["heading_color"], bold=True)
         pf.keep_with_next = True
@@ -480,6 +564,35 @@ def _format_paragraph(p, block, settings, changes, note_style):
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     if block.text.rstrip().endswith(":"):
         pf.keep_with_next = True
+    ind = st.get("note_indent_cm")
+    if ind and block.section in ("NOTES", "POLICIES", "ESTIMATES"):
+        if not _hang_number(p, ind):
+            pf.left_indent = Cm(ind)
+            pf.first_line_indent = None
+
+
+def _title_alignment(settings):
+    return WD_ALIGN_PARAGRAPH.LEFT if settings["style"].get("title_align") == "left" else WD_ALIGN_PARAGRAPH.CENTER
+
+
+def _hang_number(p, indent_cm):
+    """'3.1 Revenue is ...' -> number at the margin, text from the indent (Big 4 note layout)."""
+    runs = [r for r in p.runs if r.text]
+    if not runs:
+        return False
+    m = re.match(r"^(\s*)(\d{1,2}(?:\.\d{1,2}){0,3}\.?)([ \t]+)(?=\S)", runs[0].text)
+    if not m:
+        return False
+    runs[0].text = m.group(2) + "\t" + runs[0].text[m.end():]
+    pf = p.paragraph_format
+    pf.left_indent = Cm(indent_cm)
+    pf.first_line_indent = -Cm(indent_cm)
+    ppr = p._p.get_or_add_pPr()
+    old = ppr.find(qn("w:tabs"))
+    if old is not None:
+        ppr.remove(old)
+    pf.tab_stops.add_tab_stop(Cm(indent_cm))
+    return True
 
 
 def _text_width(d):
@@ -510,6 +623,8 @@ def _format_table(t, block, settings, changes):
     amount, note = set(block.amount_cols), block.note_col
     # widths
     tw = _text_width(t.part.document)
+    indent = Cm(st["note_indent_cm"]) if st.get("note_indent_cm") and block.section in ("NOTES", "POLICIES", "ESTIMATES") else 0
+    tw -= indent
     n_amt = len(block.amount_cols)
     note_w = Cm(1.3) if note is not None else 0
     amt_w = Cm(2.6) if n_amt <= 3 else max(Cm(1.8), int((tw * 0.68 - note_w) / n_amt))
@@ -538,6 +653,11 @@ def _format_table(t, block, settings, changes):
     ind = tblpr.find(qn("w:tblInd"))
     if ind is not None:
         tblpr.remove(ind)
+    if indent:
+        ind = OxmlElement("w:tblInd")
+        ind.set(qn("w:w"), str(int(indent / 635)))
+        ind.set(qn("w:type"), "dxa")
+        tblpr.append(ind)
     if settings.get("table_borders", "financial") == "financial":
         _border(tblpr, "w:tblBorders", {e: None for e in ("top", "left", "bottom", "right", "insideH", "insideV")})
     _reorder_tblpr(tblpr)
@@ -603,6 +723,8 @@ def _format_table(t, block, settings, changes):
                         _cell_border(cells[c], bottom=("double", 6))
         if kind != "blank":
             prev_kind = kind
+    if st.get("unit_banner"):
+        _unit_banner(t, block, changes)
     # keep a statement table on one page where it fits
     if len(rows) <= 45 and block.section in PRIMARY:
         for row in rows[:-1]:
@@ -610,6 +732,41 @@ def _format_table(t, block, settings, changes):
                 for p in cell.paragraphs:
                     p.paragraph_format.keep_with_next = True
     changes.add("Financial tables formatted")
+
+
+def _unit_banner(t, block, changes):
+    """A header row repeating the unit over each year ('Rupees  Rupees') becomes one
+    centred banner across the figure columns: '------------ Rupees ------------'."""
+    cols = block.amount_cols
+    if len(cols) < 2 or cols != list(range(cols[0], cols[0] + len(cols))):
+        return
+    for ri, (row, mrow) in enumerate(zip(t.rows, block.rows)):
+        if mrow.kind != "header":
+            continue
+        vals = [mrow.cells[c].strip() for c in cols]
+        if not vals[0] or len(set(v.lower() for v in vals)) != 1 or re.search(r"\d{4}|note", vals[0], re.I):
+            continue
+        if not re.search(r"rupees|rs\.?|pkr|\$|usd|amount|['’]000|thousand|million", vals[0], re.I):
+            continue
+        cells = unique_cells(row)
+        if len(cells) != block.width:
+            return
+        first, last = cells[cols[0]], cells[cols[-1]]
+        merged = first.merge(last)
+        text = f"{'-' * 12} {vals[0]} {'-' * 12}"
+        for p in merged.paragraphs[1:]:
+            p._p.getparent().remove(p._p)
+        para = merged.paragraphs[0]
+        for r in para.runs[1:]:
+            r._r.getparent().remove(r._r)
+        if para.runs:
+            para.runs[0].text = text
+        else:
+            para.add_run(text)
+        para.runs[0].font.bold = True
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        changes.edit(f"{block.source}, row {ri + 1}", " | ".join(vals), text, "Unit heading set across the columns")
+        return
 
 
 def _reformat_cell(cell, text, decimals, settings, block, ri, changes):

@@ -13,6 +13,7 @@ from .classify import SECTIONS
 SEV_ORDER = {"error": 0, "warning": 1, "info": 2}
 CATEGORY_TITLES = [
     ("integrity", "Content integrity"),
+    ("disclosure", "Required disclosures"),
     ("accounting", "Accounting cross-checks"),
     ("casting", "Casting (arithmetic)"),
     ("consistency", "Consistency and comparatives"),
@@ -41,7 +42,7 @@ def sections_found(model):
     return [SECTIONS.get(s, s) for s in seen]
 
 
-def to_json(path, model, settings, issues, changes, outputs, notes):
+def to_json(path, model, settings, issues, changes, outputs, notes, extra=None):
     data = {
         "source": model.source_name,
         "generated": _dt.datetime.now().isoformat(timespec="seconds"),
@@ -54,6 +55,7 @@ def to_json(path, model, settings, issues, changes, outputs, notes):
                               for l, b, a, r in changes.text[:2000]]},
         "outputs": outputs,
         "notes": notes,
+        **(extra or {}),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -96,7 +98,8 @@ def _cell(cell, text, bold=False, color=None, size=9):
     p.paragraph_format.space_after = Pt(0)
 
 
-def to_docx(path, model, settings, issues, changes, outputs, notes):
+def to_docx(path, model, settings, issues, changes, outputs, notes, extra=None):
+    extra = extra or {}
     d = docx.Document()
     for s in d.sections:
         s.left_margin = s.right_margin = Cm(2)
@@ -109,7 +112,7 @@ def to_docx(path, model, settings, issues, changes, outputs, notes):
             ("Entity", settings.get("entity_name") or "—"),
             ("Framework", settings.get("framework") or "—"),
             ("Jurisdiction", settings.get("jurisdiction") or "—"),
-            ("Entity type", settings.get("entity_type") or "—"),
+            ("Entity category", f"{extra['category']['name']} ({extra['category']['code']})" if extra.get("category") else "—"),
             ("Financial year", str(settings.get("financial_year") or "—")),
             ("Presentation currency", " ".join(x for x in (settings.get("currency"), settings.get("unit")) if x) or "—"),
             ("Template", settings["style"].get("label", settings.get("template"))),
@@ -159,6 +162,25 @@ def to_docx(path, model, settings, issues, changes, outputs, notes):
             _cell(cells[2], ", ".join(x for x in (i.section, i.location) if x))
             _cell(cells[3], i.suggestion)
         _widths(tbl, widths)
+
+    if extra.get("checklist"):
+        d.add_heading(f"Disclosure checklist — {extra['category']['name']}", 1)
+        d.add_paragraph(f"Framework: {extra['category']['framework']}. Disclosure requirements: "
+                        f"{extra['category']['schedule']}. The checklist confirms that each disclosure is present; "
+                        "its content still needs review.")
+        tbl = d.add_table(rows=1, cols=4)
+        tbl.style = "Table Grid"
+        for c, h in enumerate(("Disclosure", "Reference", "Status", "Found")):
+            _cell(tbl.rows[0].cells[c], h, bold=True)
+            _shade(tbl.rows[0].cells[c], "D9E2F3")
+        label = {"present": ("Present", "2E7D32"), "missing": ("Not found", "C00000"), "n/a": ("Not applicable", "7F7F7F")}
+        for r in extra["checklist"]:
+            cells = tbl.add_row().cells
+            _cell(cells[0], r["title"])
+            _cell(cells[1], r["ref"], size=8)
+            _cell(cells[2], label[r["status"]][0], bold=True, color=label[r["status"]][1])
+            _cell(cells[3], r["evidence"], size=8)
+        _widths(tbl, (Cm(6.2), Cm(3.6), Cm(2.2), Cm(5.5)))
 
     d.add_heading("Formatting applied", 1)
     if changes.counts:

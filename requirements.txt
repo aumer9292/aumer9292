@@ -3,6 +3,7 @@ openpyxl>=3.1
 pdfplumber>=0.11
 reportlab>=4.0
 pypdfium2>=4.0
+matplotlib>=3.7       # charts in the financial analysis
 # optional
 xlrd>=2.0          # .xls input
 # pytesseract      # OCR for scanned PDFs (also needs the Tesseract program)

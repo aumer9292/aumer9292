@@ -3,6 +3,14 @@
 import copy
 
 PRESETS = {
+    "big4": {
+        "label": "Big 4 print layout (Arial, notes with hanging numbers, signature blocks)",
+        "font": "Arial", "size": 10, "table_size": 9, "color": "000000",
+        "heading_font": "Arial", "title_size": 11, "h1_size": 10, "h2_size": 10,
+        "heading_color": "000000", "heading_caps": "upper_titles", "title_align": "left",
+        "period_caps": True, "note_caps": True, "note_indent_cm": 1.27, "unit_banner": True,
+        "annexed_notes": True, "signatures": True,
+    },
     "classic": {
         "label": "Classic (Times New Roman, audit-file style)",
         "font": "Times New Roman", "size": 11, "table_size": 10, "color": "000000",
@@ -39,9 +47,10 @@ DEFAULTS = {
     "currency": "",
     "unit": "",                    # e.g. "'000"
     # page
-    "template": "classic",
+    "template": "big4",
     "page_size": "A4",             # A4 or Letter
     "margin_top_cm": 2.5, "margin_bottom_cm": 2.5, "margin_left_cm": 2.5, "margin_right_cm": 2.0,
+    "gutter_cm": 0.0,              # extra inside margin for binding printed copies
     "line_spacing": 1.0,
     "space_after_pt": 6,
     "justify_body": True,
@@ -54,6 +63,10 @@ DEFAULTS = {
     "statement_page_breaks": True,
     "header_footer": True,
     "page_numbers": True,
+    "category": "",               # PIC, LSC, MSC or SSC, confirmed by the user
+    "title_align": "",            # left / center; empty = template default
+    "annexed_notes": None,        # add "The annexed notes ... form an integral part" lines
+    "signatures": None,           # add signature blocks under each primary statement
     # proofreading
     "apply_spelling": False,
     "apply_spacing_fixes": True,
@@ -71,16 +84,22 @@ def build_settings(user=None, reference_style=None):
             if v is None or v == "":
                 continue
             s[k] = v
-    preset = PRESETS.get(s.get("template"), PRESETS["classic"])
-    style = dict(preset)
+    preset = PRESETS.get(s.get("template"), PRESETS["big4"])
+    style = {"title_align": "center", "period_caps": False, "note_caps": False, "note_indent_cm": 0,
+             "unit_banner": False, "annexed_notes": False, "signatures": False}
+    style.update(preset)
     if reference_style:
         style.update({k: v for k, v in reference_style.items() if v})
         for k in ("margin_top_cm", "margin_bottom_cm", "margin_left_cm", "margin_right_cm", "page_size"):
             if reference_style.get(k):
                 s[k] = reference_style[k]
+    for k in ("title_align", "annexed_notes", "signatures"):
+        if s.get(k) not in (None, ""):
+            v = s[k]
+            style[k] = v if k == "title_align" else (v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on"))
     s["style"] = style
     for k in ("margin_top_cm", "margin_bottom_cm", "margin_left_cm", "margin_right_cm", "line_spacing",
-              "space_after_pt"):
+              "space_after_pt", "gutter_cm"):
         s[k] = float(s[k])
     for k in ("apply_spelling", "apply_spacing_fixes", "reformat_figures", "statement_page_breaks",
               "header_footer", "page_numbers", "justify_body", "ai_review"):

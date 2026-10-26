@@ -1,12 +1,48 @@
 """Run the whole review: read, classify, check, proofread, format, verify, report."""
 
 import os
+import re
 
-from . import ai_review, checks, docx_engine, integrity, pdf_engine, proofread, report, xlsx_engine
-from .classify import classify_document
+from . import (ai_review, analysis, checks, disclosures, docx_engine, entity, integrity, library, pdf_engine,
+               proofread, report, xlsx_engine)
+from .classify import PRIMARY, classify_document
+from .figures import extract_figures
 from .extract import read_document, read_docx
 from .model import Issue
 from .templates import build_settings, style_from_reference
+
+
+def analyse(input_path, user_settings=None):
+    """First look at a draft: what it contains and which category the entity seems to be.
+    The user confirms the category before the full review runs."""
+    settings = build_settings(user_settings)
+    model = classify_document(read_document(input_path), settings)
+    figs = extract_figures(model)
+    out = entity.suggest(model, figs, settings)
+    out["sections"] = report.sections_found(model)
+    out["entity_name"] = _entity_name(model)
+    out["years"] = list(_years(model, settings))
+    return out
+
+
+def _entity_name(model):
+    for b in model.blocks[:15]:
+        if b.kind == "paragraph" and re.search(r"\b(limited|ltd\.?|company|corporation|inc\.?|llc|plc)\b", b.text, re.I) \
+                and len(b.text) < 90:
+            return b.text.strip().title() if b.text.isupper() else b.text.strip()
+    return ""
+
+
+def _years(model, settings):
+    for t in model.tables():
+        if t.section in PRIMARY and t.column_years:
+            ys = [t.column_years.get(c) for c in t.amount_cols if t.column_years.get(c)]
+            if len(ys) >= 2:
+                return str(ys[0]), str(ys[1])
+    fy = settings.get("financial_year")
+    if fy and str(fy).isdigit():
+        return str(fy), str(int(fy) - 1)
+    return "Current year", "Prior year"
 
 
 def run(input_path, out_dir, user_settings=None, reference_path=None, progress=print):
@@ -21,6 +57,7 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
         except Exception as e:
             notes.append(f"The reference template could not be read ({e}); the selected template was used.")
     settings = build_settings(user_settings, ref_style)
+    category = (settings.get("category") or "").upper()
     wanted = set(settings.get("outputs") or ["docx", "xlsx", "pdf", "report"])
     base = os.path.splitext(os.path.basename(input_path))[0]
     ext = os.path.splitext(input_path)[1].lower()
@@ -32,6 +69,25 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
     for b in model.blocks:
         if getattr(b, "needs_review", ""):
             issues.append(Issue("extraction", "error", b.needs_review, location=b.source))
+
+    if category not in entity.CATEGORIES:
+        sug = entity.suggest(model, extract_figures(model), settings)
+        category = sug["suggested"]
+        issues.append(Issue("disclosure", "warning", f"Entity category was not confirmed; the review assumed "
+                            f"{entity.CATEGORIES[category]['name']} ({category}). " + " ".join(sug["reasons"]),
+                            suggestion="Confirm the category so the right disclosure checklist is applied."))
+    settings["category"] = category
+    cat = entity.CATEGORIES[category]
+    if not (user_settings or {}).get("framework_override"):
+        settings["framework"] = cat["framework"]
+    notes.insert(0, f"Entity category: {cat['name']} ({category}) — framework: {cat['framework']}; "
+                    f"disclosures: {cat['schedule']}.")
+
+    progress("Checking required disclosures…")
+    checklist, d_issues = disclosures.run_checklist(model, category, settings)
+    issues += d_issues
+    ref_rows, r_issues = library.compare(model, category)
+    issues += r_issues
 
     progress("Running accounting cross-checks…")
     issues += checks.run_checks(model, settings)
@@ -75,6 +131,21 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
                              "figures stored as numbers.")
         outputs["Excel"] = os.path.basename(xlsx_out)
 
+    progress("Analysing the figures…")
+    years = _years(model, settings)
+    result = analysis.compute(model)
+    chart_dir = os.path.join(out_dir, "charts")
+    os.makedirs(chart_dir, exist_ok=True)
+    chart_files = analysis.charts(result, chart_dir, years)
+    an_docx = os.path.join(out_dir, f"{base} - financial analysis.docx")
+    if result["ratios"] or result["horizontal"]:
+        analysis.write_report(an_docx, result, chart_files, settings, years)
+        outputs["Financial analysis"] = os.path.basename(an_docx)
+        if "Excel" in outputs:
+            analysis.add_to_workbook(os.path.join(out_dir, outputs["Excel"]), result, years)
+    else:
+        notes.append("Financial analysis skipped: the primary statements' figures could not be identified.")
+
     if "pdf" in wanted:
         progress("Creating PDF…")
         pdf_out = os.path.join(out_dir, f"{base} - formatted.pdf")
@@ -89,8 +160,11 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
     rep_docx = os.path.join(out_dir, f"{base} - review report.docx")
     rep_json = os.path.join(out_dir, f"{base} - review report.json")
     outputs["Review report"] = os.path.basename(rep_docx)
-    data = report.to_json(rep_json, model, settings, issues, changes, outputs, notes)
-    report.to_docx(rep_docx, model, settings, issues, changes, outputs, notes)
+    extra = {"category": {"code": category, **cat}, "checklist": checklist, "reference_comparison": ref_rows,
+             "analysis": result, "years": list(years),
+             "charts": [{"title": t, "file": "charts/" + os.path.basename(p)} for t, p in chart_files]}
+    data = report.to_json(rep_json, model, settings, issues, changes, outputs, notes, extra)
+    report.to_docx(rep_docx, model, settings, issues, changes, outputs, notes, extra)
     progress("Done.")
     return data
 

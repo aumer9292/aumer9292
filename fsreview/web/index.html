@@ -85,49 +85,73 @@ details summary{cursor:pointer;font-weight:600;margin-top:14px}
 .spinner{width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 4px;font-size:12.5px;color:var(--muted)}
+.steps span{padding:3px 9px;border-radius:99px;border:1px solid var(--line)}
+.steps span.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.cats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}
+@media (max-width:620px){.cats{grid-template-columns:1fr}}
+.catopt{border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;display:block;margin:0;color:var(--ink)}
+.catopt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.catopt input{margin-right:6px}
+.catopt b{font-size:14px}
+.catopt small{display:block;color:var(--muted);margin-top:4px;font-size:12.5px}
+.sug{font-size:11px;font-weight:700;color:var(--ok);margin-left:6px}
+.facts{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.reasons{margin:6px 0 0;padding-left:18px;color:var(--ink)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:14px 0 8px;flex-wrap:wrap}
+.tabs button{border:0;background:none;padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent;font-weight:600;color:var(--muted)}
+.tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+table.tbl th,table.tbl td{border-top:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+table.tbl th{color:var(--muted);font-weight:600;font-size:12px}
+table.tbl td.n{text-align:right;font-family:var(--num);white-space:nowrap}
+.st-present{color:var(--ok);font-weight:700}.st-missing{color:var(--err);font-weight:700}.st-na{color:var(--muted)}
+.chart{width:100%;max-width:760px;border:1px solid var(--line);border-radius:8px;margin:8px 0;background:#fff}
+.lib li{margin:4px 0;font-size:13px;display:flex;gap:8px;align-items:center;justify-content:space-between}
+.lib ul{list-style:none;padding:0;margin:6px 0}
+.tablewrap{overflow-x:auto}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>FS Review</h1><span class="ver" id="ver"></span>
-    <p>Format, proofread and review a complete set of financial statements. Figures and wording are never changed silently.</p>
+    <p>Formats, checks disclosures, analyses and reviews a complete set of financial statements.</p>
   </header>
   <div class="grid">
+    <div style="display:grid;gap:14px">
     <form class="card" id="form">
-      <h2>1. Financial statements</h2>
+      <div class="steps"><span class="on" id="s1">1 Upload</span><span id="s2">2 Confirm entity</span><span id="s3">3 Review</span></div>
+      <h2>Financial statements</h2>
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose file">
         <strong>Drop the draft here or click to choose</strong>
         <small>Word, Excel, PDF or text</small>
         <div class="file" id="fname"></div>
       </div>
       <input type="file" id="file" accept=".docx,.docm,.xlsx,.xlsm,.xls,.pdf,.txt" hidden>
-      <label for="ref">Approved prior-year set to copy the house style from (optional, .docx)</label>
-      <input type="file" id="ref" accept=".docx">
 
       <h3>Engagement</h3>
-      <label for="entity_name">Entity name</label><input type="text" id="entity_name" placeholder="e.g. Northwind Trading Limited">
+      <label for="entity_name">Entity name</label><input type="text" id="entity_name" placeholder="Read from the document if left blank">
       <div class="two">
         <div><label for="financial_year">Financial year</label><input type="number" id="financial_year" min="1990" max="2100" placeholder="2025"></div>
-        <div><label for="framework">Framework</label>
-          <select id="framework"><option>IFRS</option><option>IFRS for SMEs</option><option>US GAAP</option>
-            <option>UK GAAP (FRS 102)</option><option>IPSAS</option><option>Local GAAP</option></select></div>
-        <div><label for="jurisdiction">Jurisdiction</label><input type="text" id="jurisdiction" placeholder="e.g. Pakistan"></div>
-        <div><label for="entity_type">Entity type</label>
-          <select id="entity_type"><option>Private company</option><option>Listed company</option><option>Small company</option>
-            <option>Not-for-profit</option><option>Partnership</option><option>Public sector</option><option>Group (consolidated)</option></select></div>
-        <div><label for="currency">Presentation currency</label><input type="text" id="currency" placeholder="e.g. PKR, USD"></div>
+        <div><label for="jurisdiction">Jurisdiction</label><input type="text" id="jurisdiction" value="Pakistan"></div>
+        <div><label for="currency">Presentation currency</label><input type="text" id="currency" placeholder="e.g. Rupees"></div>
         <div><label for="unit">Unit</label><select id="unit"><option value="">Units</option><option>'000</option><option>million</option></select></div>
       </div>
 
-      <h3>Formatting</h3>
+      <h3>Page layout</h3>
       <div class="two">
         <div><label for="template">Template</label><select id="template"></select></div>
+        <div><label for="style_reference">House style from</label><select id="style_reference"><option value="">The template</option></select></div>
         <div><label for="page_size">Page size</label><select id="page_size"><option>A4</option><option>Letter</option></select></div>
+        <div><label for="title_align">Statement titles</label><select id="title_align"><option value="">Template default</option><option value="left">Left</option><option value="center">Centred</option></select></div>
         <div><label for="negative_style">Negative figures</label><select id="negative_style"><option value="brackets">(1,234)</option><option value="minus">-1,234</option></select></div>
-        <div><label for="zero_style">Nil figures</label><select id="zero_style"><option value="-">-</option><option value="0">0</option></select></div>
+        <div><label for="gutter_cm">Binding gutter (cm)</label><input type="number" id="gutter_cm" min="0" max="3" step="0.5" value="0"></div>
       </div>
-      <label class="check"><input type="checkbox" id="statement_page_breaks" checked> Start each statement and report on a new page</label>
+      <label class="check"><input type="checkbox" id="statement_page_breaks" checked> Each statement and report on a new page</label>
+      <label class="check"><input type="checkbox" id="annexed_notes" checked> Add "The annexed notes form an integral part…" where missing</label>
+      <label class="check"><input type="checkbox" id="signatures" checked> Add signature blocks (Chief Executive, Director, CFO for PIC) where missing</label>
       <label class="check"><input type="checkbox" id="header_footer" checked> Header with entity name, footer with page numbers</label>
       <label class="check"><input type="checkbox" id="financial_borders" checked> Clean financial rules (lines on totals only)</label>
 
@@ -139,24 +163,46 @@ details summary{cursor:pointer;font-weight:600;margin-top:14px}
       <label for="custom_words">Words to accept (names, local terms)</label>
       <textarea id="custom_words" placeholder="One per line"></textarea>
 
-      <button class="btn" id="go" type="submit">Review and format</button>
+      <button class="btn" id="go" type="submit">Next: identify the entity</button>
       <div id="formerr"></div>
       <p class="note" id="office"></p>
     </form>
 
+    <section class="card lib" aria-labelledby="libh">
+      <h2 id="libh">Reference library</h2>
+      <p class="note" style="margin-top:0">Add the ICAP illustrative financial statements for each category and any model set
+        your firm follows. Every review of that category is compared with them.</p>
+      <ul id="libitems"></ul>
+      <form id="libform">
+        <input type="file" id="libfile" accept=".docx,.xlsx,.pdf,.txt">
+        <div class="two">
+          <div><label for="libname">Name</label><input type="text" id="libname" placeholder="ICAP illustrative — MSC"></div>
+          <div><label for="libcat">Category</label><select id="libcat"><option>PIC</option><option>LSC</option><option selected>MSC</option><option>SSC</option><option value="ANY">Any</option></select></div>
+        </div>
+        <button class="btn ghost" style="margin-top:8px" type="submit">Add to library</button>
+        <div id="liberr"></div>
+      </form>
+    </section>
+    </div>
+
     <section class="card" id="results" aria-live="polite">
-      <div class="empty" id="empty">Choose a draft and press <b>Review and format</b>.<br>
-        You will get a formatted Word file, an Excel workbook, a PDF and a review report.</div>
+      <div class="empty" id="empty">Choose a draft and press <b>Next</b>.<br>
+        You will be asked which category the entity falls in; then you get the formatted Word file, Excel workbook, PDF,
+        disclosure checklist, financial analysis with charts, and the review report.</div>
     </section>
   </div>
 </div>
-
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const CATS = [["integrity","Content integrity"],["accounting","Accounting cross-checks"],["casting","Casting"],
-  ["consistency","Consistency and comparatives"],["proofreading","Proofreading"],["extraction","Items for manual review"]];
-let chosen = null, last = null, filter = "open";
+const CATS = [["integrity","Content integrity"],["disclosure","Required disclosures"],["accounting","Accounting cross-checks"],
+  ["casting","Casting"],["consistency","Consistency and comparatives"],["proofreading","Proofreading"],["extraction","Items for manual review"]];
+const IDS = ["entity_name","financial_year","jurisdiction","currency","unit","template","style_reference","page_size",
+  "title_align","negative_style","gutter_cm","statement_page_breaks","annexed_notes","signatures","header_footer",
+  "apply_spacing_fixes","apply_spelling","ai_review","custom_words","financial_borders"];
+let chosen = null, last = null, pending = null, filter = "open", tab = "findings";
+
+function step(n) { [1,2,3].forEach(i => $("s" + i).classList.toggle("on", i === n)); }
 
 fetch("/api/options").then(r => r.json()).then(o => {
   $("ver").textContent = "v" + o.version;
@@ -164,9 +210,11 @@ fetch("/api/options").then(r => r.json()).then(o => {
   if (!o.ai_available) { $("ai_review").disabled = true; $("ai_note").textContent = "(install the 'anthropic' package to enable)"; }
   $("office").textContent = o.office ? "PDF will be produced with LibreOffice (exact Word layout)."
                                      : "LibreOffice not found: the PDF will use a simplified layout.";
-  try { const saved = JSON.parse(localStorage.getItem("fsr-settings") || "{}");
-        for (const [k, v] of Object.entries(saved)) { const el = $(k); if (!el) continue;
-          if (el.type === "checkbox") el.checked = !!v; else el.value = v; } } catch (e) {}
+  loadLibrary().then(() => {
+    try { const saved = JSON.parse(localStorage.getItem("fsr-settings") || "{}");
+          for (const [k, v] of Object.entries(saved)) { const el = $(k); if (!el) continue;
+            if (el.type === "checkbox") el.checked = !!v; else el.value = v; } } catch (e) {}
+  });
 });
 
 const drop = $("drop"), file = $("file");
@@ -179,15 +227,14 @@ drop.addEventListener("drop", e => pick(e.dataTransfer.files[0]));
 function pick(f) { if (!f) return; chosen = f; $("fname").textContent = f.name + " · " + (f.size / 1024).toFixed(0) + " KB"; }
 
 function settings() {
-  const ids = ["entity_name","financial_year","framework","jurisdiction","entity_type","currency","unit","template",
-    "page_size","negative_style","zero_style","statement_page_breaks","header_footer","apply_spacing_fixes",
-    "apply_spelling","ai_review","custom_words","financial_borders"];
   const s = {};
-  for (const id of ids) { const el = $(id); s[id] = el.type === "checkbox" ? el.checked : el.value.trim(); }
+  for (const id of IDS) { const el = $(id); s[id] = el.type === "checkbox" ? el.checked : el.value.trim(); }
   try { localStorage.setItem("fsr-settings", JSON.stringify(s)); } catch (e) {}
   s.table_borders = s.financial_borders ? "financial" : "keep"; delete s.financial_borders;
   return s;
 }
+
+function busy(btn, on, label) { btn.disabled = on; btn.innerHTML = on ? '<span class="spinner"></span> ' + label : label; }
 
 $("form").onsubmit = async (e) => {
   e.preventDefault();
@@ -195,28 +242,76 @@ $("form").onsubmit = async (e) => {
   if (!chosen) { $("formerr").innerHTML = '<div class="err-box">Choose the financial statements file first.</div>'; return; }
   const fd = new FormData();
   fd.append("file", chosen);
-  if ($("ref").files[0]) fd.append("reference", $("ref").files[0]);
   fd.append("settings", JSON.stringify(settings()));
-  const btn = $("go"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Reviewing…';
+  busy($("go"), true, "Reading the statements…");
   try {
-    const r = await fetch("/api/review", { method: "POST", body: fd });
+    const r = await fetch("/api/analyse", { method: "POST", body: fd });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || "Processing failed");
-    last = data; filter = "open"; render();
+    if (!r.ok) throw new Error(data.error || "Could not read the document");
+    pending = data; askCategory();
   } catch (err) {
     $("formerr").innerHTML = '<div class="err-box">' + esc(err.message) + "</div>";
-  } finally { btn.disabled = false; btn.textContent = "Review and format"; }
+  } finally { busy($("go"), false, "Next: identify the entity"); }
 };
+
+const money = (v) => v == null ? "not found" : "Rs " + Math.round(v).toLocaleString("en-US");
+
+function askCategory() {
+  step(2);
+  const d = pending, f = d.facts;
+  if (!$("entity_name").value && d.entity_name) $("entity_name").value = d.entity_name;
+  const opts = Object.entries(d.categories).map(([code, c]) => `
+    <label class="catopt"><input type="radio" name="cat" value="${code}" ${code === d.suggested ? "checked" : ""}>
+      <b>${esc(c.name)} (${code})</b>${code === d.suggested ? '<span class="sug">SUGGESTED</span>' : ""}
+      <small>${esc(c.framework)} · ${esc(c.schedule)}</small><small>${esc(c.who)}</small></label>`).join("");
+  $("results").innerHTML = `
+    <h2>Which set of financial statements is this?</h2>
+    <p class="note" style="margin-top:0">The disclosure checklist, framework and reference comparison depend on the answer.</p>
+    <div class="facts">
+      <span class="chip">Turnover (prior year): ${money(f.turnover)}</span>
+      <span class="chip">Paid-up capital: ${money(f.paid_up_capital)}</span>
+      <span class="chip">Employees: ${f.employees ?? "not found"}</span>
+      <span class="chip">Listed: ${f.listed ? "yes" : "no mention"}</span>
+      <span class="chip">Private company: ${f.private ? "yes" : "not stated"}</span>
+    </div>
+    <ul class="reasons">${d.reasons.map(r => "<li>" + esc(r) + "</li>").join("")}</ul>
+    <div class="cats" role="radiogroup" aria-label="Entity category">${opts}</div>
+    <label class="check"><input type="checkbox" id="listed_flag" ${f.listed ? "checked" : ""}> The company is listed (adds EPS, segments and Shariah disclosures)</label>
+    <p class="note">Sections found: ${d.sections.map(esc).join(", ") || "none"}. Thresholds: large ≥ Rs ${(f.thresholds.large.turnover/1e6).toLocaleString()}m turnover / Rs ${(f.thresholds.large.paid_up_capital/1e6).toLocaleString()}m capital / ${f.thresholds.large.employees} employees; small ≤ Rs ${(f.thresholds.small.turnover/1e6).toLocaleString()}m / Rs ${(f.thresholds.small.paid_up_capital/1e6).toLocaleString()}m / ${f.thresholds.small.employees}. Verify against current SECP notifications.</p>
+    <button class="btn" id="confirm" type="button">Confirm and review</button>
+    <div id="reverr"></div>`;
+  $("confirm").onclick = review;
+}
+
+async function review() {
+  const cat = document.querySelector('input[name="cat"]:checked').value;
+  const s = settings(); s.category = cat; s.listed = $("listed_flag").checked;
+  busy($("confirm"), true, "Formatting, checking and analysing…");
+  try {
+    const r = await fetch("/api/review", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ job: pending.job, settings: s }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Processing failed");
+    last = data; filter = "open"; tab = "findings"; step(3); render();
+  } catch (err) {
+    $("reverr").innerHTML = '<div class="err-box">' + esc(err.message) + "</div>";
+    busy($("confirm"), false, "Confirm and review");
+  }
+}
+
+const fmtR = (v, u) => v == null ? "n/a" : u === "%" ? v.toFixed(1) + "%" : u === "days" ? Math.round(v) + " days"
+  : u === "amount" ? (v < 0 ? "(" + Math.round(-v).toLocaleString("en-US") + ")" : Math.round(v).toLocaleString("en-US")) : v.toFixed(2) + "x";
 
 function render() {
   const d = last, s = d.summary;
   const verdict = s.error ? ["t-err", `${s.error} error(s) must be resolved or explained before the statements are finalised.`]
-               : s.warning ? ["t-warn", "No errors found. Review the warnings below before finalising."]
+               : s.warning ? ["t-warn", "No errors found. Review the warnings before finalising."]
                : ["t-ok", "No errors or warnings found."];
   const files = Object.entries(d.outputs).map(([k, v]) =>
       `<a href="/api/file/${d.job}/${encodeURIComponent(v)}">${esc(k)} ↓</a>`).join("");
-  const counts = Object.entries(d.changes.counts).map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("");
+  const tabs = [["findings","Findings"],["checklist","Disclosure checklist"],["analysis","Financial analysis"],["changes","Formatting applied"]];
   let html = `<h2>${esc(d.source)}</h2>
+    <p class="note" style="margin-top:0">${esc(d.category.name)} (${esc(d.category.code)}) · ${esc(d.category.framework)} · ${esc(d.category.schedule)}</p>
     <div class="tiles">
       <div class="tile t-err"><b>${s.error}</b><span>Errors</span></div>
       <div class="tile t-warn"><b>${s.warning}</b><span>Warnings</span></div>
@@ -225,9 +320,18 @@ function render() {
     </div>
     <div class="verdict ${verdict[0]}">${esc(verdict[1])}</div>
     <div class="downloads">${files}</div>
-    <h3>Sections identified</h3><div class="chips">${d.sections.map(x => `<span class="chip">${esc(x)}</span>`).join("") || "None"}</div>
-    ${d.notes.length ? "<p class='note'>" + d.notes.map(esc).join("<br>") + "</p>" : ""}
-    <h3>Findings</h3>
+    <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" data-t="${k}" aria-selected="${tab === k}">${l}</button>`).join("")}</div>`;
+  if (tab === "findings") html += findings(d);
+  if (tab === "checklist") html += checklist(d);
+  if (tab === "analysis") html += analysisView(d);
+  if (tab === "changes") html += changesView(d);
+  $("results").innerHTML = html;
+  $("results").querySelectorAll(".tabs button").forEach(b => b.onclick = () => { tab = b.dataset.t; render(); });
+  $("results").querySelectorAll(".filters button").forEach(b => b.onclick = () => { filter = b.dataset.f; render(); });
+}
+
+function findings(d) {
+  let html = `${d.notes.length ? "<p class='note'>" + d.notes.map(esc).join("<br>") + "</p>" : ""}
     <div class="filters" role="group" aria-label="Filter findings">
       ${[["open","To review"],["error","Errors"],["warning","Warnings"],["passed","Passed"],["all","All"]].map(([k, l]) =>
         `<button type="button" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
@@ -244,16 +348,93 @@ function render() {
         ${(i.section || i.location) ? `<div class="meta">${esc([i.section, i.location].filter(Boolean).join(" · "))}</div>` : ""}
         ${i.suggestion ? `<div class="fix">→ ${esc(i.suggestion)}</div>` : ""}</div></div>`; }).join("") + "</div>";
   }
-  html += `<details><summary>Formatting applied</summary><div class="chips">${counts || "None"}</div>`;
-  if (d.changes.edits.length) {
-    html += `<table class="changes"><thead><tr><th>Where</th><th>Before</th><th>After</th><th>Why</th></tr></thead><tbody>` +
-      d.changes.edits.slice(0, 400).map(e => `<tr><td>${esc(e.location)}</td><td class="num">${esc(e.before)}</td>
-        <td class="num">${esc(e.after)}</td><td>${esc(e.reason)}</td></tr>`).join("") + "</tbody></table>";
-  }
-  html += "</details>";
-  $("results").innerHTML = html;
-  $("results").querySelectorAll(".filters button").forEach(b => b.onclick = () => { filter = b.dataset.f; render(); });
+  return html;
 }
+
+function checklist(d) {
+  const lbl = { present: ["Present", "st-present"], missing: ["Not found", "st-missing"], "n/a": ["Not applicable", "st-na"] };
+  const count = (k) => d.checklist.filter(r => r.status === k).length;
+  let html = `<p>${count("present")} present · <b class="st-missing">${count("missing")} not found</b> · ${count("n/a")} not applicable
+    for a ${esc(d.category.name)}. A “Present” item still needs reading for adequacy.</p>
+    <div class="tablewrap"><table class="tbl"><thead><tr><th>Disclosure</th><th>Reference</th><th>Status</th><th>Where found</th></tr></thead><tbody>` +
+    d.checklist.map(r => `<tr><td>${esc(r.title)}</td><td>${esc(r.ref)}</td><td class="${lbl[r.status][1]}">${lbl[r.status][0]}</td>
+      <td>${esc(r.evidence)}</td></tr>`).join("") + "</tbody></table></div>";
+  if (d.reference_comparison && d.reference_comparison.length) {
+    html += `<h3>Compared with the reference library</h3><div class="tablewrap"><table class="tbl"><thead><tr><th>Reference</th><th>Note in reference</th><th>In this draft</th></tr></thead><tbody>` +
+      d.reference_comparison.map(r => `<tr><td>${esc(r.reference)}</td><td>${esc(r.note)}</td>
+        <td class="${r.status === "present" ? "st-present" : "st-missing"}">${r.status === "present" ? "Yes" : "Not found"}</td></tr>`).join("") + "</tbody></table></div>";
+  } else {
+    html += `<p class="note">No reference statements for this category in the library yet. Add the ICAP illustrative set on the left to compare note by note.</p>`;
+  }
+  return html;
+}
+
+function analysisView(d) {
+  const a = d.analysis, y = d.years;
+  if (!a.ratios.length) return "<p>The figures needed for analysis could not be identified in the primary statements.</p>";
+  let html = a.highlights.length ? "<h3>Points for the reviewer</h3><ul>" + a.highlights.map(h => "<li>" + esc(h) + "</li>").join("") + "</ul>" : "";
+  html += d.charts.map(c => `<img class="chart" alt="${esc(c.title)} chart, ${esc(y[0])} against ${esc(y[1])}; figures in the tables below" src="/api/file/${d.job}/${c.file}">`).join("");
+  html += `<h3>Ratio analysis</h3><div class="tablewrap"><table class="tbl"><thead><tr><th>Ratio</th><th>${esc(y[0])}</th><th>${esc(y[1])}</th><th>Observation</th></tr></thead><tbody>`;
+  let g = null;
+  for (const r of a.ratios) {
+    if (r.group !== g) { g = r.group; html += `<tr><th colspan="4">${esc(g)}</th></tr>`; }
+    html += `<tr><td>${esc(r.name)}<div class="meta note">${esc(r.formula)}</div></td><td class="n">${fmtR(r.cy, r.unit)}</td><td class="n">${fmtR(r.py, r.unit)}</td><td>${esc(r.comment)}</td></tr>`;
+  }
+  html += "</tbody></table></div>";
+  for (const b of a.horizontal) {
+    html += `<h3>${esc(b.section)}: horizontal and vertical analysis</h3><div class="tablewrap"><table class="tbl"><thead><tr><th>Line</th><th>${esc(y[0])}</th><th>${esc(y[1])}</th><th>Change</th><th>%</th><th>Common size</th></tr></thead><tbody>` +
+      b.lines.map(l => `<tr><td>${l.kind !== "item" ? "<b>" + esc(l.label) + "</b>" : esc(l.label)}</td><td class="n">${fmtR(l.cy, "amount")}</td><td class="n">${fmtR(l.py, "amount")}</td>
+        <td class="n">${fmtR(l.change, "amount")}</td><td class="n">${l.pct == null ? "—" : (l.pct >= 0 ? "+" : "") + l.pct.toFixed(1) + "%"}</td>
+        <td class="n">${l.common == null ? "—" : l.common.toFixed(1) + "%"}</td></tr>`).join("") + "</tbody></table></div>";
+  }
+  return html;
+}
+
+function changesView(d) {
+  const counts = Object.entries(d.changes.counts).map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("");
+  let html = `<div class="chips">${counts || "None"}</div>`;
+  if (d.changes.edits.length) {
+    html += `<div class="tablewrap"><table class="changes"><thead><tr><th>Where</th><th>Before</th><th>After</th><th>Why</th></tr></thead><tbody>` +
+      d.changes.edits.slice(0, 400).map(e => `<tr><td>${esc(e.location)}</td><td class="num">${esc(e.before)}</td>
+        <td class="num">${esc(e.after)}</td><td>${esc(e.reason)}</td></tr>`).join("") + "</tbody></table></div>";
+  }
+  return html;
+}
+
+async function loadLibrary() {
+  const items = await fetch("/api/library").then(r => r.json());
+  $("libitems").innerHTML = items.length ? items.map(m => `<li><span><b>${esc(m.category)}</b> · ${esc(m.name)}
+      <span class="note">(${m.note_headings.length} notes)</span></span>
+      <button class="btn ghost" type="button" data-del="${m.id}">Remove</button></li>`).join("")
+    : '<li class="note">Empty.</li>';
+  $("libitems").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    await fetch("/api/library/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.del }) });
+    loadLibrary();
+  });
+  const sel = $("style_reference"), keep = sel.value;
+  sel.innerHTML = '<option value="">The template</option>' + items.filter(m => m.file.toLowerCase().endsWith(".docx"))
+    .map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
+  sel.value = keep;
+}
+
+$("libform").onsubmit = async (e) => {
+  e.preventDefault();
+  $("liberr").innerHTML = "";
+  const f = $("libfile").files[0];
+  if (!f) { $("liberr").innerHTML = '<div class="err-box">Choose the reference file.</div>'; return; }
+  const fd = new FormData();
+  fd.append("file", f); fd.append("name", $("libname").value || f.name); fd.append("category", $("libcat").value);
+  const btn = e.submitter || $("libform").querySelector("button");
+  busy(btn, true, "Reading…");
+  try {
+    const r = await fetch("/api/library", { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Could not add");
+    $("libfile").value = ""; $("libname").value = "";
+    await loadLibrary();
+  } catch (err) { $("liberr").innerHTML = '<div class="err-box">' + esc(err.message) + "</div>"; }
+  finally { busy(btn, false, "Add to library"); }
+};
 </script>
 </body>
 </html>

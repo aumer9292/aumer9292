@@ -13,13 +13,14 @@ sys.path.insert(0, os.path.join(ROOT, "samples"))
 
 import make_samples  # noqa: E402
 from fsreview import checks, pipeline  # noqa: E402
-from fsreview.classify import analyse_table, classify_title  # noqa: E402
+from fsreview.classify import analyse_table, classify_document, classify_title  # noqa: E402
 from fsreview.extract import read_docx  # noqa: E402
 from fsreview.model import Document, Row, Table  # noqa: E402
 from fsreview.numbers import format_amount, parse_amount  # noqa: E402
 from fsreview.pdf_engine import find_office  # noqa: E402
 
-FAST = {"financial_year": "2025", "entity_name": "Northwind Trading Limited", "outputs": ["docx", "xlsx", "report"]}
+FAST = {"financial_year": "2025", "entity_name": "Northwind Trading Limited", "category": "MSC",
+        "outputs": ["docx", "xlsx", "report"]}
 
 
 @pytest.fixture(scope="module")
@@ -211,3 +212,87 @@ def test_report_files(docx_run):
     assert (out / "fs - review report.docx").exists()
     j = json.loads((out / "fs - review report.json").read_text(encoding="utf-8"))
     assert j["summary"]["error"] == data["summary"]["error"] > 0
+
+
+# ------------------------------------------------- entity category and disclosures
+
+def _model(path):
+    from fsreview.extract import read_document
+    return classify_document(read_document(str(path)))
+
+
+def test_category_suggestions(samples, tmp_path):
+    from fsreview import entity
+    from fsreview.figures import extract_figures
+    m = _model(samples / "fs.docx")
+    assert entity.suggest(m, extract_figures(m))["suggested"] == "MSC"
+    m.blocks[0].text = "NORTHWIND TRADING (PRIVATE) LIMITED"
+    assert entity.suggest(m, extract_figures(m))["suggested"] == "SSC"
+    m.blocks[0].text = "The shares of the company are listed on the Pakistan Stock Exchange."
+    assert entity.suggest(m, extract_figures(m))["suggested"] == "PIC"
+    figs = extract_figures(m)
+    figs["revenue"] = (Decimal(2_000_000), Decimal(1_500_000))      # Rs '000 -> 1.5 billion
+    m.blocks[0].text = "NORTHWIND"
+    assert entity.suggest(m, figs)["suggested"] == "LSC"
+
+
+def test_disclosure_checklist(samples):
+    from fsreview import disclosures
+    m = _model(samples / "fs.docx")
+    rows, issues = disclosures.run_checklist(m, "MSC")
+    st = {r["id"]: r["status"] for r in rows}
+    assert st["ppe"] == "present" and st["share_capital"] == "present"
+    assert st["related_parties"] == "missing" and st["authorisation"] == "missing"
+    assert st["deferred_tax"] == "n/a"
+    assert "eps" not in st                       # not required below PIC
+    rows, _ = disclosures.run_checklist(m, "PIC", {"listed": True})
+    assert {r["id"]: r["status"] for r in rows}["eps"] == "missing"
+    assert any("Disclosure not found: Transactions and balances with related parties" in i.message for i in issues)
+
+
+def test_reference_library(samples, tmp_path, monkeypatch):
+    from fsreview import library
+    monkeypatch.setattr(library, "LIB", str(tmp_path / "lib"))
+    ref = tmp_path / "icap.docx"
+    d = docx.Document()
+    d.add_paragraph("Notes to the Financial Statements")
+    for i, t in enumerate(["The company and its operations", "Trade debts", "Long term financing",
+                           "Number of employees"], 1):
+        d.add_paragraph(f"{i}. {t}").runs[0].bold = True
+        d.add_paragraph("Text.")
+    d.save(str(ref))
+    meta = library.add(str(ref), "ICAP MSC", "reference", "MSC")
+    assert len(meta["note_headings"]) == 4
+    rows, issues = library.compare(_model(samples / "fs.docx"), "MSC")
+    st = {r["note"]: r["status"] for r in rows}
+    assert st["The company and its operations"] == "present"      # matched to 'General information'
+    assert st["Trade debts"] == "present"                         # matched to 'Trade and other receivables'
+    assert st["Long term financing"] == "missing" and st["Number of employees"] == "missing"
+    assert library.compare(_model(samples / "fs.docx"), "PIC") == ([], [])
+
+
+# ------------------------------------------------------------- analysis and layout
+
+def test_ratio_analysis(samples):
+    from fsreview import analysis
+    r = analysis.compute(_model(samples / "fs.docx"))
+    by = {x["name"]: x for x in r["ratios"]}
+    assert round(by["Gross profit margin"]["cy"], 1) == 37.0        # 10,500 / 28,400
+    assert round(by["Current ratio"]["cy"], 2) == round(8250 / 3900, 2)
+    assert round(by["Debt to equity"]["cy"], 2) == round(3500 / 14600, 2)
+    assert any(g["name"] == "Revenue" and round(g["pct"], 1) == 9.7 for g in r["growth"])
+
+
+def test_full_outputs_with_analysis_and_big4_layout(docx_run):
+    data, out = docx_run
+    assert (out / "fs - financial analysis.docx").exists()
+    assert data["charts"] and all((out / c["file"]).exists() for c in data["charts"])
+    wb = openpyxl.load_workbook(str(out / "fs - formatted.xlsx"))
+    assert "Ratios" in wb.sheetnames and "Analysis" in wb.sheetnames
+    d = docx.Document(str(out / "fs - formatted.docx"))
+    cells = " ".join(c.text for t in d.tables for row in t.rows for c in row.cells)
+    assert "Chief Executive" in cells and "Director" in cells
+    assert "------------ $'000 ------------" in cells
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "5\tPROPERTY, PLANT AND EQUIPMENT" in text or "5.\tPROPERTY, PLANT AND EQUIPMENT" in text
+    assert data["category"]["code"] == "MSC" and data["checklist"]

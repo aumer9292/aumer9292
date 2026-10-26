@@ -58,32 +58,39 @@ class Handler(BaseHTTPRequestHandler):
                 "ai_available": ai_available(),
                 "office": bool(find_office()),
             })
-        m = re.fullmatch(r"/api/file/([0-9a-f]{32})/([^/]+)", self.path)
+        if self.path == "/api/library":
+            from . import library
+            return self._send(200, library.items())
+        m = re.fullmatch(r"/api/file/([0-9a-f]{32})/((?:charts/)?[^/]+)", self.path)
         if m:
-            job, name = m.group(1), os.path.basename(unquote(m.group(2)))
-            path = os.path.join(JOBS, job, "out", name)
+            job, rel = m.group(1), unquote(m.group(2))
+            sub_dir, name = os.path.split(rel)
+            name = os.path.basename(name)
+            path = os.path.join(JOBS, job, "out", sub_dir, name) if sub_dir == "charts" else \
+                os.path.join(JOBS, job, "out", name)
             if not os.path.isfile(path):
                 return self._send(404, {"error": "File not found"})
             ctype = {".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                      ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
-                     ".pdf": "application/pdf", ".json": "application/json"}.get(
+                     ".pdf": "application/pdf", ".json": "application/json", ".png": "image/png"}.get(
                 os.path.splitext(name)[1].lower(), "application/octet-stream")
             with open(path, "rb") as f:
                 data = f.read()
-            return self._send(200, data, ctype, {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+            disp = "inline" if name.endswith(".png") else "attachment"
+            return self._send(200, data, ctype, {"Content-Disposition": f"{disp}; filename*=UTF-8''{quote(name)}"})
         return self._send(404, {"error": "Not found"})
 
-    def do_POST(self):
-        if self.path != "/api/review":
-            return self._send(404, {"error": "Not found"})
+    def _form(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_UPLOAD:
-            return self._send(413, {"error": "Upload is empty or larger than 100 MB."})
+            raise ValueError("Upload is empty or larger than 100 MB.")
         ctype = self.headers.get("Content-Type", "")
-        if not ctype.startswith("multipart/form-data"):
-            return self._send(400, {"error": "Expected a form upload."})
         body = self.rfile.read(length)
+        if ctype.startswith("application/json"):
+            return json.loads(body or b"{}"), {}
+        if not ctype.startswith("multipart/form-data"):
+            raise ValueError("Expected a form upload.")
         msg = email.parser.BytesParser(policy=email.policy.default).parsebytes(
             b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + body)
         fields, files = {}, {}
@@ -95,7 +102,31 @@ class Handler(BaseHTTPRequestHandler):
             if fname:
                 files[name] = (os.path.basename(fname), part.get_payload(decode=True) or b"")
             else:
-                fields[name] = part.get_content().strip() if part.get_content_maintype() == "text" else ""
+                raw = part.get_payload(decode=True) or b""
+                fields[name] = raw.decode("utf-8", errors="replace").strip()
+        return fields, files
+
+    def do_POST(self):
+        try:
+            fields, files = self._form()
+        except (ValueError, json.JSONDecodeError) as e:
+            return self._send(400, {"error": str(e)})
+        try:
+            if self.path == "/api/analyse":
+                return self._analyse(fields, files)
+            if self.path == "/api/review":
+                return self._review(fields)
+            if self.path == "/api/library":
+                return self._library_add(fields, files)
+            if self.path == "/api/library/delete":
+                from . import library
+                return self._send(200, {"deleted": library.remove(fields.get("id", ""))})
+        except Exception as e:
+            traceback.print_exc()
+            return self._send(500, {"error": f"The document could not be processed: {e}"})
+        return self._send(404, {"error": "Not found"})
+
+    def _analyse(self, fields, files):
         if "file" not in files or not files["file"][1]:
             return self._send(400, {"error": "Choose the financial statements file to review."})
         fname, data = files["file"]
@@ -104,29 +135,64 @@ class Handler(BaseHTTPRequestHandler):
         job = uuid.uuid4().hex
         jdir = os.path.join(JOBS, job)
         os.makedirs(os.path.join(jdir, "out"), exist_ok=True)
-        src = os.path.join(jdir, fname)
-        with open(src, "wb") as f:
+        with open(os.path.join(jdir, fname), "wb") as f:
             f.write(data)
-        ref = None
-        if "reference" in files and files["reference"][1]:
-            rname, rdata = files["reference"]
-            if rname.lower().endswith(".docx"):
-                ref = os.path.join(jdir, "reference-" + rname)
-                with open(ref, "wb") as f:
-                    f.write(rdata)
-        try:
-            settings = json.loads(fields.get("settings") or "{}")
-        except json.JSONDecodeError:
-            settings = {}
-        from .pipeline import run
-        try:
-            with _lock:     # LibreOffice runs one conversion at a time
-                result = run(src, os.path.join(jdir, "out"), settings, ref, progress=lambda m: None)
-        except Exception as e:
-            traceback.print_exc()
-            return self._send(500, {"error": f"The document could not be processed: {e}"})
+        meta = {"source": fname}
+        if "reference" in files and files["reference"][1] and files["reference"][0].lower().endswith(".docx"):
+            meta["reference"] = "reference-" + files["reference"][0]
+            with open(os.path.join(jdir, meta["reference"]), "wb") as f:
+                f.write(files["reference"][1])
+        with open(os.path.join(jdir, "job.json"), "w") as f:
+            json.dump(meta, f)
+        settings = _settings(fields.get("settings"))
+        from .pipeline import analyse
+        result = analyse(os.path.join(jdir, fname), settings)
         result["job"] = job
         return self._send(200, result)
+
+    def _review(self, fields):
+        job = str(fields.get("job", ""))
+        if not re.fullmatch(r"[0-9a-f]{32}", job) or not os.path.isfile(os.path.join(JOBS, job, "job.json")):
+            return self._send(400, {"error": "Upload the document again."})
+        jdir = os.path.join(JOBS, job)
+        with open(os.path.join(jdir, "job.json")) as f:
+            meta = json.load(f)
+        settings = fields.get("settings") or {}
+        ref = os.path.join(jdir, meta["reference"]) if meta.get("reference") else None
+        if not ref and settings.get("style_reference"):
+            from . import library
+            m = next((x for x in library.items() if x["id"] == settings["style_reference"]), None)
+            if m and m["file"].lower().endswith(".docx"):
+                ref = library.file_of(m)
+        from .pipeline import run
+        with _lock:     # LibreOffice runs one conversion at a time
+            result = run(os.path.join(jdir, meta["source"]), os.path.join(jdir, "out"), settings, ref,
+                         progress=lambda m: None)
+        result["job"] = job
+        return self._send(200, result)
+
+    def _library_add(self, fields, files):
+        if "file" not in files or not files["file"][1]:
+            return self._send(400, {"error": "Choose the reference file."})
+        fname, data = files["file"]
+        if not fname.lower().endswith(ALLOWED):
+            return self._send(400, {"error": "Use a Word, Excel, PDF or text file."})
+        import tempfile as _t
+        from . import library
+        tmp = os.path.join(_t.mkdtemp(prefix="fsr_ref_"), fname)
+        with open(tmp, "wb") as f:
+            f.write(data)
+        cat = fields.get("category", "ANY").upper()
+        meta = library.add(tmp, fields.get("name") or fname, fields.get("kind") or "reference",
+                           cat if cat in ("PIC", "LSC", "MSC", "SSC", "ANY") else "ANY")
+        return self._send(200, meta)
+
+
+def _settings(raw):
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
 
 
 def serve(port=8765, open_browser=True):
