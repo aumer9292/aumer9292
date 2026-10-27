@@ -1,0 +1,39 @@
+FS REVIEW - QUICK START
+=======================
+
+WHAT IT DOES
+  You give it a draft set of financial statements (Word, Excel, PDF or text).
+  It asks which category the company is (PIC, Large, Medium or Small), then gives you:
+    1. The statements formatted for printing in Big 4 style (Word and PDF)
+    2. A review report: errors, missing notes/disclosures, casting, cross-checks, spelling
+    3. A financial analysis: ratios, growth, horizontal/vertical analysis and charts
+    4. Your Excel file with print settings fixed (nothing else in it is changed)
+
+ONE-TIME SETUP (Windows)
+  1. Install Python 3.10 or later from https://www.python.org/downloads/
+     During setup tick "Add python.exe to PATH".
+  2. Optional: install LibreOffice (https://www.libreoffice.org) for exact PDFs.
+  3. Unzip this folder anywhere, e.g. Documents\FS Review.
+
+EVERY TIME
+  1. Double-click "Start FS Review.bat". Your browser opens. (The first start installs
+     components and takes a few minutes.)
+  2. Drop in the draft financial statements. Enter the financial year.
+  3. Press "Next: identify the entity".
+  4. Check the suggested category (PIC / LSC / MSC / SSC) and press "Confirm and review".
+  5. Read the Findings and Disclosure checklist tabs. Download the files.
+  6. Close the black window when you are finished.
+
+ADD YOUR REFERENCE SETS (once)
+  In "Reference library" on the left, add:
+    - the ICAP illustrative financial statements for PIC, LSC, MSC and SSC (choose the category)
+    - your model set (for example the Service Industries set)
+  Every later review of that category lists the notes the reference has and the draft does not.
+
+GOOD TO KNOW
+  - Everything runs on your own computer. Nothing is uploaded, unless you tick "AI review".
+  - The tool never changes a figure. Every wording change is listed in the review report.
+  - Excel files: only the statement and notes sheets are read (those with a print area or a
+    statement title). Trial balances, ledgers and working papers are listed and left alone.
+  - Size thresholds for the categories are defaults: confirm them against the latest SECP
+    notification. You always confirm the category yourself.
