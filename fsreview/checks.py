@@ -16,7 +16,11 @@ def _fmt(v):
 
 def _col_name(t, c):
     y = t.column_years.get(c)
-    return str(y) if y else f"column {c + 1}"
+    if y:
+        return str(y)
+    if c in t.amount_cols and len(t.amount_cols) <= 2:
+        return ("current year", "comparative year")[t.amount_cols.index(c)]
+    return f"column {c + 1}"
 
 
 def _find_rows(doc, section, pattern):
@@ -52,13 +56,166 @@ def run_checks(doc, settings):
     issues += check_note_references(doc)
     issues += check_notes_agree(doc)
     issues += check_presence(doc)
+    issues += check_restatement(doc)
+    issues += check_annexed_range(doc)
+    return issues
+
+
+def check_restatement(doc):
+    """Restated comparatives need a third statement of financial position and a restatement note."""
+    issues = []
+    restated = any(re.search(r"\brestated\b", " ".join(r.cells), re.I)
+                   for t in doc.tables() if t.section in PRIMARY for r in t.rows[:4])
+    restated = restated or any(re.search(r"\(restated\)|\brestated\b", p.text, re.I)
+                               for p in doc.paragraphs() if p.section in PRIMARY)
+    if not restated:
+        return issues
+    sofp = [t for t in doc.tables() if t.section == "SOFP" and is_financial_table(t)]
+    if sofp and len(sofp[0].amount_cols) < 3:
+        issues.append(Issue("accounting", "error", "Comparatives are marked 'Restated' but the statement of "
+                            "financial position has no third column as at the beginning of the preceding period.",
+                            location=sofp[0].source, section=SECTIONS["SOFP"],
+                            suggestion="Present a third statement of financial position as at the start of the "
+                                       "comparative year (IAS 1.40A–40D; Section 10 of IFRS for SMEs for MSCs)."))
+    notes = "\n".join(p.text for p in doc.paragraphs() if p.section in ("NOTES", "POLICIES", "ESTIMATES"))
+    if not re.search(r"restat|prior period (?:error|adjustment)|correction of (?:an )?error", notes, re.I):
+        issues.append(Issue("disclosure", "error", "Comparatives are restated but no note explains the restatement.",
+                            section=SECTIONS["NOTES"],
+                            suggestion="Disclose the nature of the prior period error and the correction to each "
+                                       "line item affected (IAS 8.49)."))
+    else:
+        issues.append(Issue("disclosure", "info", "Restatement is explained in the notes.", status="passed"))
+    return issues
+
+
+def check_annexed_range(doc):
+    """'The annexed notes 1 to 33 form an integral part…' must name the last note that exists."""
+    issues = []
+    last = max([int(p.note_number) for p in doc.paragraphs() if p.role == "note_heading" and p.note_number
+                and p.note_number.isdigit()] + [0])
+    if not last:
+        return issues
+    seen = set()
+    for p in doc.paragraphs():
+        m = re.search(r"annexed notes?\s+(?:from\s+)?(\d+)\s*(?:to|-|–)\s*(\d+)", p.text, re.I)
+        if not m or m.group(0) in seen:
+            continue
+        seen.add(m.group(0))
+        if int(m.group(2)) != last:
+            issues.append(Issue("consistency", "error", f"“{m.group(0)}” — the last note in the financial "
+                                f"statements is note {last}.", location=p.source, section=SECTIONS.get(p.section),
+                                suggestion=f"Change to 'The annexed notes 1 to {last} form an integral part of these "
+                                           "financial statements.'"))
+        if re.search(r"notes?\s+from\s+\d+\s*-", m.group(0), re.I):
+            issues.append(Issue("proofreading", "info", f"Usual wording is 'The annexed notes 1 to {m.group(2)} form "
+                                f"an integral part…' (found “{m.group(0)}”).", location=p.source))
     return issues
 
 
 # ------------------------------------------------------------- casting
 
+BALANCE = re.compile(r"^(?:balance|opening|closing|as at|at (?:the )?(?:beginning|start|end)|(?:loan|amount)s? "
+                     r"(?:payable|receivable|outstanding) at|carrying amount at|written down value as at)", re.I)
+
+
+def _cast_schedule(t, sec):
+    """Movement schedules (fixed assets, loans, provisions): opening + movements = closing, closing
+    carried forward as the next opening, and a 'Total' column that adds across."""
+    issues = []
+    cols = t.amount_cols
+    n = len(cols)
+    checked = bad = 0
+    total_col = None
+    if n >= 3 and re.search(r"\btotal\b", " ".join(r.cells[cols[-1]] for r in t.rows[:4]), re.I):
+        total_col = cols[-1]
+    opening, moves, last_closing = None, [], None
+    for r in t.rows:
+        if r.kind in ("header", "blank", "info"):
+            continue
+        vals = row_values(t, r)
+        if r.kind == "heading" and not any(v is not None for v in vals):
+            opening, moves, last_closing = None, [], None
+            continue
+        if total_col is not None and r.kind != "heading":
+            parts = [parse_amount(r.cells[c]) for c in cols[:-1]]
+            tot = parse_amount(r.cells[total_col])
+            if tot is not None and any(v is not None for v in parts):
+                ssum = sum((v for v in parts if v is not None), Decimal(0))
+                checked += 1
+                if abs(ssum - tot) > TOL:
+                    bad += 1
+                    issues.append(Issue("casting", "error", f"'{r.label}': the columns add to {_fmt(ssum)} but the "
+                                        f"total column shows {_fmt(tot)}.", location=t.source, section=sec))
+        label = r.label or ""
+        texts = [r.cells[c] for c in range(len(r.cells)) if c not in cols and r.cells[c].strip()]
+        if re.match(r"^(?:wdv|written down value|net book value|carrying amount)", label, re.I):
+            continue
+        bal = next((x for x in texts if BALANCE.search(x)), None)
+        if bal:
+            label = bal
+            is_open = bool(re.search(r"\b(?:opening|beginning|start)\b|\b0?1(?:st)?,?\s+(?:july|january|april|october)\b|"
+                                     r"\b(?:july|january|april|october)\s+0?1\b", label, re.I))
+            is_close = bool(re.search(r"\b(?:closing|end)\b|\b(?:30|31)(?:st|th)?,?\s+[a-z]+|[a-z]+\s+(?:30|31)\b",
+                                      label, re.I)) and not is_open
+            if is_close and opening is None:
+                last_closing = vals          # a balance shown on its own (no movements to reconcile)
+                continue
+            if opening is None:
+                # carried forward from the closing just above: only for dated balances of the same schedule
+                if last_closing is not None and re.search(r"\b(19|20)\d{2}\b", label):
+                    checked += 1
+                    diff = [k for k in range(n) if vals[k] is not None and last_closing[k] is not None
+                            and abs(vals[k] - last_closing[k]) > TOL]
+                    if diff:
+                        bad += 1
+                        issues.append(Issue("casting", "error", f"'{label}' does not equal the closing balance "
+                                            "just above it.", location=t.source, section=sec))
+                opening, moves = vals, []
+                continue
+            calc = _sum([opening] + moves, n)
+            checked += 1
+            diffs = [f"{_col_name(t, cols[k])}: shown {_fmt(vals[k])}, opening + movements {_fmt(calc[k])}"
+                     for k in range(n) if vals[k] is not None and calc[k] is not None and abs(vals[k] - calc[k]) > TOL]
+            if diffs:
+                bad += 1
+                issues.append(Issue("casting", "error", f"'{label}' does not reconcile — " + "; ".join(diffs),
+                                    location=t.source, section=sec,
+                                    suggestion="Check the movements between the opening and closing balances."))
+            last_closing, opening, moves = vals, None, []
+            continue
+        if opening is not None:
+            moves.append(vals)
+    if checked and not bad:
+        issues.append(Issue("casting", "info", f"Movement schedule reconciles ({checked} check(s)).",
+                            location=t.source, section=sec, status="passed"))
+    return issues
+
+
+def _is_schedule(t):
+    texts = [x for r in t.rows if r.kind not in ("header", "blank")
+             for c, x in enumerate(r.cells) if c not in t.amount_cols and x.strip()]
+    return t.section != "SOCE" and sum(1 for x in texts if BALANCE.search(x)) >= 2
+
+
+def _is_effect_table(doc, t):
+    """Tables showing the effect of a restatement or change in policy: increase/(decrease) per line."""
+    head = " ".join(" ".join(r.cells) for r in t.rows if r.kind in ("header", "heading"))
+    before, heading = [], ""
+    for b in doc.blocks:
+        if b is t:
+            break
+        if b.kind == "paragraph" and b.text.strip():
+            before = (before + [b.text])[-3:]
+            if b.role == "note_heading" and b.note_number and "." not in b.note_number:
+                heading = b.text
+    return bool(re.search(r"increase\s*/\s*\(?decrease|effect of (?:the )?restatement|impact of",
+                          head + " " + " ".join(before), re.I)) or \
+        bool(re.search(r"restatement|change in accounting polic|prior period", heading, re.I))
+
+
 def cast_tables(doc):
     issues = []
+    carry = None          # lines left open at the end of a table that continues on the next page
     for ti, t in enumerate(doc.tables()):
         if not is_financial_table(t):
             continue
@@ -66,12 +223,19 @@ def cast_tables(doc):
         if t.section == "SOCE":
             issues += _cast_soce(t)
             continue
+        if _is_effect_table(doc, t):
+            continue          # an increase/(decrease) table in a restatement note does not add down
+        if _is_schedule(t):
+            issues += _cast_schedule(t, sec)
+            continue
         cols = t.amount_cols
         n = len(cols)
         items, stack, prev_total = [], [], None
+        if carry and carry[0] == (t.note_number, n) and t.note_number:
+            items = list(carry[1])
         checked = failed = 0
         for r in t.rows:
-            if r.kind in ("header", "blank"):
+            if r.kind in ("header", "blank", "info"):
                 continue
             if r.kind == "heading":
                 # lines left without their own total (e.g. one borrowing line under
@@ -84,6 +248,10 @@ def cast_tables(doc):
             if r.kind == "item":
                 items.append(vals)
                 continue
+            present = [abs(v) for v in vals if v is not None]
+            if present and all(v < 1000 and v == v.to_integral_value() for v in present) and \
+                    any(abs(v) >= 100000 for it in items + stack for v in it if v is not None):
+                continue          # a count (persons, employees) among rupee amounts
             # A total is built in one of the usual ways. 'pop' says how many earlier
             # totals it replaces on the stack when it matches.
             candidates = []
@@ -108,7 +276,17 @@ def cast_tables(doc):
                     diffs = [f"{_col_name(t, cols[k])}: shown {_fmt(vals[k])}, computed {_fmt(best[1][k])}"
                              for k in range(n) if vals[k] is not None and best[1][k] is not None
                              and abs(vals[k] - best[1][k]) > TOL]
-                    if diffs:
+                    worst = max((abs(vals[k] - best[1][k]) for k in range(n)
+                                 if vals[k] is not None and best[1][k] is not None), default=Decimal(0))
+                    rounding = worst <= Decimal("0.5") * (len(items) + len(stack) + 1) + 1
+                    if diffs and rounding:
+                        issues.append(Issue("casting", "warning",
+                                            f"'{r.label or '(unlabelled total)'}' is out by a rounding difference "
+                                            f"against {best[0]} — " + "; ".join(diffs),
+                                            location=t.source, section=sec,
+                                            suggestion="Round each figure (e.g. =ROUND(x,0)) so the printed lines "
+                                                       "add up to the printed total."))
+                    elif diffs:
                         failed += 1
                         issues.append(Issue("casting", "error",
                                             f"'{r.label or '(unlabelled total)'}' does not add up to "
@@ -121,6 +299,7 @@ def cast_tables(doc):
             stack.append(vals)
             prev_total = vals
             items = []
+        carry = ((t.note_number, n), items) if items and t.section in ("NOTES", "POLICIES", "ESTIMATES") else None
         if checked and not failed:
             issues.append(Issue("casting", "info", f"{checked} total(s) cast correctly.",
                                 location=t.source, section=sec, status="passed"))
@@ -273,12 +452,35 @@ def check_socf(doc):
                    sec, t.source)
         if closing is not None:
             cash, ts, _ = _first_value(doc, "SOFP", r"^cash and (?:cash equivalents|bank balances?)|^cash at bank|^bank balances", k)
-            if cash is not None:
+            note_ok = _closing_cash_note(doc, closing, k)
+            if note_ok:
+                issues.append(Issue("accounting", "info", f"Closing cash and cash equivalents ({year}) agree to "
+                                    f"note {note_ok}.", location=t.source, section=sec, status="passed"))
+            elif cash is not None:
                 _agree(issues, closing, cash, f"Closing cash in the cash flow statement vs cash in the statement "
                                               f"of financial position ({year})", sec, t.source, severity="warning",
                        suggestion="A difference is acceptable only if explained, e.g. bank overdrafts included "
                                   "in cash and cash equivalents; disclose the reconciliation.")
     return issues
+
+
+def _closing_cash_note(doc, closing, k):
+    """The note the closing cash line cites, if that note shows the same figure."""
+    for t in doc.tables():
+        if t.section != "SOCF" or t.note_col is None:
+            continue
+        for r in t.rows:
+            if re.search(r"(?:at (?:the )?end|closing)", r.label or "", re.I) and r.cells[t.note_col].strip():
+                ref = re.match(r"\d{1,2}", r.cells[t.note_col].strip())
+                if not ref:
+                    continue
+                for nt in doc.tables():
+                    if nt.note_number and nt.note_number.split(".")[0] == ref.group(0) and nt.section != "SOCF":
+                        for nr in nt.rows:
+                            vals = row_values(nt, nr)
+                            if len(vals) > k and vals[k] is not None and abs(vals[k] - closing) <= TOL:
+                                return ref.group(0)
+    return None
 
 
 def check_soce(doc):
@@ -304,6 +506,29 @@ def check_soce(doc):
             te1, _, _ = _first_value(doc, "SOFP", r"^total equity$|^equity attributable|^total shareholders'? equity", 1)
             _agree(issues, mid, te1, "Comparative closing equity in the statement of changes in equity vs the "
                                      "statement of financial position", sec, t.source)
+    rows = t.rows
+    for i, r in enumerate(rows):
+        if not re.match(r"^total comprehensive (?:income|loss|\(loss\))", r.label or "", re.I):
+            continue
+        tci = parse_amount(r.cells[total_col])
+        block = []
+        for j in range(i - 1, -1, -1):
+            if re.match(r"^(balance|as at|at )", rows[j].label or "", re.I):
+                break
+            block.append(rows[j])
+        parts = [parse_amount(x.cells[total_col]) for x in block
+                 if re.search(r"profit|loss|other comprehensive", x.label or "", re.I)
+                 and parse_amount(x.cells[total_col]) is not None]
+        expected = sum(parts, Decimal(0)) if parts else None
+        if tci is not None and expected is not None and abs(tci - expected) > TOL:
+            nxt = next((parse_amount(x.cells[total_col]) for x in rows[i + 1:]
+                        if re.match(r"^(balance|as at|at )", x.label or "", re.I)), None)
+            why = " — it shows the closing balance instead" if nxt is not None and abs(nxt - tci) <= TOL else ""
+            issues.append(Issue("accounting", "error", f"'{r.label}' in the statement of changes in equity shows "
+                                f"{_fmt(tci)}, but profit plus other comprehensive income is {_fmt(expected)}{why}.",
+                                location=t.source, section=sec,
+                                suggestion="Show total comprehensive income (profit + OCI) on this line; the "
+                                           "balance belongs on the 'Balance as at' line."))
     if profit_rows:
         p_soce = parse_amount(profit_rows[-1].cells[total_col])
         p_soci, _, _ = _first_value(doc, "SOCI", PROFIT, 0)
@@ -367,7 +592,8 @@ def check_comparatives(doc, settings):
 def _note_numbers(doc):
     nums = []
     for p in doc.paragraphs():
-        if p.role == "note_heading" and p.note_number and "." not in p.note_number:
+        if p.role == "note_heading" and p.note_number and "." not in p.note_number \
+                and not re.search(r"continued|cont'?d\.?", p.text, re.I):
             nums.append((int(p.note_number), p))
     return nums
 
@@ -432,7 +658,7 @@ def check_notes_agree(doc):
         return issues
     agreed = 0
     for t in doc.tables():
-        if t.note_col is None or t.section not in PRIMARY or not t.amount_cols:
+        if t.note_col is None or t.section not in ("SOFP", "SOCI") or not t.amount_cols:
             continue
         for r in t.rows:
             refs = re.findall(r"\d{1,2}", r.cells[t.note_col])

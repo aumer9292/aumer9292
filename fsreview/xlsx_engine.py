@@ -1,10 +1,7 @@
 """Excel output.
 
-An Excel input keeps every worksheet, formula, defined name and value: only
-cell styles, number formats, column widths and print settings change, and the
-result is compared cell by cell with the original before it is released.
-Other inputs get a workbook with one worksheet per financial table, figures
-stored as numbers.
+Word, PDF and text inputs get a workbook with one worksheet per financial table,
+figures stored as numbers. (An Excel input is never re-saved: see xlsx_patch.)
 """
 
 import re
@@ -14,7 +11,6 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
 from .classify import GRAND_TOTAL, PRIMARY, SECTIONS, TOTAL, is_financial_table
-from .model import Issue
 from .numbers import YEAR, parse_amount
 
 THIN = Side(style="thin", color="000000")
@@ -33,42 +29,49 @@ def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def format_workbook(src, out, settings, changes):
-    keep_vba = src.lower().endswith(".xlsm")
-    wb = openpyxl.load_workbook(src, keep_vba=keep_vba)
-    vals = openpyxl.load_workbook(src, data_only=True)
-    st = settings["style"]
-    for ws in wb.worksheets:
-        vws = vals[ws.title]
-        _format_sheet(ws, vws, settings, st, changes)
-    wb.save(out)
-    return verify_workbook(src, out)
+def _print_setup(ws, settings, changes):
+    """Print the sheet the way a signed set is printed: A4/Letter, one page wide, centred, page numbers."""
+    ps = ws.page_setup
+    ps.paperSize = ws.PAPERSIZE_LETTER if settings.get("page_size") == "Letter" else ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ps.fitToWidth = 1
+    ps.fitToHeight = 0
+    ws.print_options.horizontalCentered = True
+    m = ws.page_margins
+    m.left, m.right, m.top, m.bottom = 0.7, 0.5, 0.75, 0.75
+    m.left += (settings.get("gutter_cm") or 0) / 2.54
+    if not (ws.oddFooter.center.text or ws.oddFooter.left.text or ws.oddFooter.right.text):
+        ws.oddFooter.center.text = "&P"
+        ws.oddFooter.center.size = 8
+    ws.sheet_view.showGridLines = False
+    changes.add("Excel print settings set (paper, fit to page width, centred, page numbers)")
 
 
-def _format_sheet(ws, vws, settings, st, changes):
+def _format_sheet(ws, vws, settings, st, changes, bounds=None):
     if ws.max_row < 1 or ws.max_column < 1:
         return
-    maxc = min(ws.max_column, 60)
-    maxr = min(ws.max_row, 5000)
-    # label column: the first column holding mostly text
-    label_col, best = 1, -1
-    for c in range(1, min(maxc, 6) + 1):
-        n = sum(1 for r in range(1, maxr + 1) if isinstance(vws.cell(r, c).value, str) and
-                vws.cell(r, c).value.strip())
+    c0, r0, c1, r1 = bounds or (1, 1, min(ws.max_column, 60), min(ws.max_row, 5000))
+    rows = [r for r in range(r0, r1 + 1) if not ws.row_dimensions[r].hidden]
+    columns = [c for c in range(c0, c1 + 1) if not ws.column_dimensions[get_column_letter(c)].hidden]
+    # label column: the column holding the most text
+    label_col, best = columns[0] if columns else 1, -1
+    for c in columns[:6]:
+        n = sum(1 for r in rows if isinstance(vws.cell(r, c).value, str) and len(vws.cell(r, c).value.strip()) > 3)
         if n > best:
             label_col, best = c, n
     amount_cols = []
-    for c in range(1, maxc + 1):
+    for c in columns:
         if c == label_col:
             continue
-        cells = [ws.cell(r, c) for r in range(1, maxr + 1) if ws.cell(r, c).value is not None]
+        cells = [ws.cell(r, c) for r in rows if ws.cell(r, c).value is not None]
         nums = [x for x in cells if _is_number(x.value) or (isinstance(x.value, str) and x.value.startswith("="))]
         nums = [x for x in nums if not (isinstance(x.value, int) and 1900 <= x.value <= 2100)]
-        if nums and len(nums) >= 0.5 * len(cells) and not all(isinstance(x.value, int) and abs(x.value) < 60
+        if nums and len(nums) >= 0.5 * len(cells) and not all(_is_number(vws.cell(x.row, x.column).value)
+                                                               and abs(vws.cell(x.row, x.column).value or 0) < 100
                                                                for x in nums):
             amount_cols.append(c)
-    first_data = maxr + 1
-    for r in range(1, maxr + 1):
+    first_data = (rows[-1] + 1) if rows else r1 + 1
+    for r in rows:
         if any(_is_number(vws.cell(r, c).value) and not (isinstance(vws.cell(r, c).value, int)
                and 1900 <= vws.cell(r, c).value <= 2100) for c in amount_cols) or \
                 any(isinstance(ws.cell(r, c).value, str) and ws.cell(r, c).value.startswith("=") for c in amount_cols):
@@ -76,19 +79,15 @@ def _format_sheet(ws, vws, settings, st, changes):
             break
     decimals = {}
     for c in amount_cols:
-        dec = 0
-        for r in range(first_data, maxr + 1):
-            v = vws.cell(r, c).value
-            fmt = ws.cell(r, c).number_format or ""
-            if _is_number(v) and isinstance(v, float) and not float(v).is_integer():
-                m = re.search(r"\.(0+)", fmt)
-                dec = max(dec, len(m.group(1)) if m else 2)
-        decimals[c] = min(dec, 4)
+        # keep the decimals the sheet already shows; never reveal hidden decimals
+        decs = [len(m.group(1)) for r in rows if r >= first_data
+                for m in [re.search(r"#,##0\.(0+)", (ws.cell(r, c).number_format or "").split(";")[0])] if m]
+        decimals[c] = max(set(decs), key=decs.count) if decs else 0
 
     font = st["font"]
     size = st["table_size"]
     prev_kind = None
-    for r in range(1, maxr + 1):
+    for r in rows:
         label = str(vws.cell(r, label_col).value or "").strip()
         has_amt = any(vws.cell(r, c).value is not None or ws.cell(r, c).value is not None for c in amount_cols)
         formulas = [str(ws.cell(r, c).value) for c in amount_cols if isinstance(ws.cell(r, c).value, str)
@@ -105,7 +104,7 @@ def _format_sheet(ws, vws, settings, st, changes):
             kind = "total"
         else:
             kind = "item"
-        for c in range(1, maxc + 1):
+        for c in columns:
             cell = ws.cell(r, c)
             if cell.value is None and c not in amount_cols:
                 continue
@@ -126,7 +125,10 @@ def _format_sheet(ws, vws, settings, st, changes):
                 elif not is_pct_or_date and (_is_number(cell.value) or (isinstance(cell.value, str)
                                                                          and cell.value.startswith("="))):
                     new = _num_format(decimals.get(c, 0), settings)
-                    if cell.number_format != new:
+                    has_style = "#,##0" in fmt and ("(" in fmt or "-" in fmt)
+                    if bounds and has_style:
+                        pass        # the sheet already presents figures with separators and negatives: keep it
+                    elif cell.number_format != new:
                         cell.number_format = new
                         changes.add("Excel number formats standardised")
                     cell.alignment = Alignment(horizontal="right", vertical="bottom")
@@ -136,44 +138,14 @@ def _format_sheet(ws, vws, settings, st, changes):
                     cell.border = Border(bottom=DOUBLE)
         if kind != "blank":
             prev_kind = kind
-    ws.column_dimensions[get_column_letter(label_col)].width = min(60, max(
-        [len(str(vws.cell(r, label_col).value or "")) for r in range(1, maxr + 1)] + [20]) + 2)
-    for c in amount_cols:
-        ws.column_dimensions[get_column_letter(c)].width = 15 if decimals.get(c) else 14
-    ws.sheet_view.showGridLines = False
-    ws.page_setup.paperSize = ws.PAPERSIZE_LETTER if settings.get("page_size") == "Letter" else ws.PAPERSIZE_A4
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    if bounds is None:
+        # a sheet this tool built: size the columns. An existing sheet keeps its tuned print layout.
+        ws.column_dimensions[get_column_letter(label_col)].width = min(60, max(
+            [len(str(vws.cell(r, label_col).value or "")) for r in rows] + [20]) + 2)
+        for c in amount_cols:
+            ws.column_dimensions[get_column_letter(c)].width = 15 if decimals.get(c) else 14
+        _print_setup(ws, settings, changes)
     changes.add("Excel worksheets formatted")
-
-
-def verify_workbook(src, out):
-    """Every cell's value or formula must be unchanged."""
-    a = openpyxl.load_workbook(src)
-    b = openpyxl.load_workbook(out)
-    issues = []
-    if a.sheetnames != b.sheetnames:
-        issues.append(Issue("integrity", "error", "Worksheet list changed during formatting."))
-        return issues
-    diffs = 0
-    formulas = 0
-    for name in a.sheetnames:
-        wa, wb_ = a[name], b[name]
-        for row in wa.iter_rows():
-            for c in row:
-                v2 = wb_.cell(c.row, c.column).value
-                if isinstance(c.value, str) and c.value.startswith("="):
-                    formulas += 1
-                if c.value != v2 and not (hasattr(c.value, "text") and hasattr(v2, "text")):
-                    diffs += 1
-    if diffs:
-        issues.append(Issue("integrity", "error", f"{diffs} cell value(s) differ between the original and formatted "
-                            "workbook. Do not use the formatted workbook.", status="open"))
-    else:
-        issues.append(Issue("integrity", "info", f"Excel workbook: every value and all {formulas} formula(s) "
-                            "retained unchanged.", status="passed"))
-    return issues
 
 
 def model_to_workbook(model, out, settings, changes):

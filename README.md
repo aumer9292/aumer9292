@@ -78,7 +78,17 @@ The command exits with status 1 when the review found errors, so it can be used 
 ## Inputs
 
 * **Word** (.docx) — formatted in place; the best route.
-* **Excel** (.xlsx, .xlsm, .xls) — each worksheet is read; .xls is read through `xlrd` and saved as .xlsx (formulas cannot be carried over from .xls; the report says so).
+* **Excel audit files** (.xlsx, .xlsm) — firms keep the statements, notes and working papers in one workbook.
+  Only the statement and note sheets are read as the financial statements: a sheet qualifies when it is visible,
+  not named like a working paper (TB, ledger, adjusting entries, workings, provision, tax …), and has a print area or
+  a statement title at the top. Only the print area is read; hidden rows and columns are skipped; every figure is
+  read as Excel displays it; note numbers kept in their own column (4, 4.1 …) become note headings; narrative,
+  tables and signature lines are separated. The report lists the working papers and hidden sheets that were not
+  read. Figures carrying decimals hidden by the number format are counted (they make printed totals fail to add
+  up). **The client's workbook is never re-saved**: only the print settings of the statement sheets are patched
+  (paper size, fit to page width, centred, page numbers, gridlines off) and every other part of the file — formulas,
+  logos, working papers — is proved byte-for-byte identical. Ratios and analysis go into a separate workbook.
+* **.xls** — read through `xlrd`; the formatted workbook is saved as .xlsx (formulas cannot be carried over).
 * **PDF** — text PDFs are rebuilt into Word: paragraphs are rejoined, figure columns are found from their positions, wrapped labels are rejoined, and running headers/footers are dropped from the body (the report lists them). Scanned pages are read with OCR when `pytesseract` and Tesseract are installed; otherwise the page is marked in the document and the report as needing manual work.
 * **Text** (.txt) — columns are found from spacing.
 * **Reference template** — an approved Word set; its font, sizes and margins become the house style.
@@ -129,6 +139,15 @@ observations are mechanical starting points for your analytical procedures.
 
 **Consistency and comparatives** — comparative column present; first column matches the selected financial year; years consecutive and current year first; blank comparatives; one currency/unit label; one period-end date across the statement headings; duplicate, missing or out-of-order note numbers; references to notes that do not exist; mixed terminology (balance sheet vs statement of financial position, debtors vs receivables, -ise vs -ize, judgement vs judgment, …).
 
+**Further checks** — a restated set must show a third statement of financial position at the start of the
+comparative year (IAS 1.40A) and a restatement note (IAS 8.49); "The annexed notes 1 to N" must name the last note;
+duplicate note numbers; in the statement of changes in equity, a "Total comprehensive income" line that shows a
+balance instead of profit + OCI; closing cash agreed to the cash note it cites; the statement of compliance must
+name the framework the confirmed category requires (e.g. IFRS for SMEs for an MSC, not the withdrawn AFRS for
+SMEs), and only one framework may be named throughout; the same paragraph written twice with different figures;
+movement schedules (fixed assets, loans, provisions) reconcile opening + movements = closing, carry forward, and
+add across to the total column; note tables continued across pages are cast as one.
+
 **Proofreading** — a list of misspellings common in financial statements (applied only if you ask, and always listed), repeated words, spacing and punctuation, unmatched brackets, impossible dates (31 June), years after the financial year in headings, and references to superseded standards (IAS 18, IAS 17, IAS 39, IFRS 4, IAS 11 …). Install `pyspellchecker` for a general dictionary check as well.
 
 **AI review (optional)** — with `pip install anthropic` and an `ANTHROPIC_API_KEY`, the narrative paragraphs (policies, notes, reports) are sent to Claude for grammar, clarity and framework-wording suggestions. Suggestions go into the report only; nothing is changed in the document, and Claude is told never to propose changes to figures, dates or note numbers.
@@ -152,6 +171,8 @@ python -m pytest tests
 | Module | Role |
 | --- | --- |
 | `fsreview/extract.py` | Readers for Word, Excel, PDF (with optional OCR) and text into one document model |
+| `fsreview/xlsx_read.py` | Statement/note sheet selection, print areas and row layout for Excel audit files |
+| `fsreview/xlsx_patch.py` | Lossless print set-up of the client's workbook and the byte-for-byte proof |
 | `fsreview/classify.py` | Sections, paragraph roles, table columns and row kinds |
 | `fsreview/checks.py` | Casting and accounting cross-checks |
 | `fsreview/entity.py` | Entity category suggestion and thresholds |

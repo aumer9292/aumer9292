@@ -308,6 +308,11 @@ def format_document(d, model, settings, changes=None, from_word=True):
                         and not _already_breaks(items, model.blocks, target):
                     items[target].paragraph_format.page_break_before = True
                     changes.add("Statements and reports started on a new page")
+            elif block.role == "title" and block.section == prev_section and settings.get("statement_page_breaks"):
+                # the same heading block again (each Excel sheet of notes repeats it): a new page, as in Excel
+                target = _title_block_start(items, model.blocks, idx, entity)
+                if target is not None and not _already_breaks(items, model.blocks, target):
+                    items[target].paragraph_format.page_break_before = True
             if block.role == "title":
                 prev_section = block.section
         else:
@@ -316,6 +321,7 @@ def format_document(d, model, settings, changes=None, from_word=True):
             # space after a table before the next paragraph
             if idx + 1 < len(items) and model.blocks[idx + 1].kind == "paragraph":
                 items[idx + 1].paragraph_format.space_before = Pt(settings["space_after_pt"] + 2)
+    _landscape_wide_tables(d, items, model.blocks, changes)
     if settings["style"].get("annexed_notes") or settings["style"].get("signatures"):
         _statement_endings(d, items, model.blocks, settings, changes, entity)
     for el in to_delete:
@@ -323,6 +329,77 @@ def format_document(d, model, settings, changes=None, from_word=True):
     if settings.get("header_footer"):
         _header_footer(d, settings, changes)
     return changes
+
+
+def _landscape_wide_tables(d, items, blocks, changes, min_cols=6):
+    """A statement or note whose table has many figure columns (changes in equity, a fixed-asset schedule)
+    goes on landscape pages, from its heading to the end of that statement or note."""
+    import copy
+    body_sect = d.element.body.find(qn("w:sectPr"))
+    if body_sect is None:
+        return
+    done = set()
+    for i, b in enumerate(blocks):
+        if b.kind != "table" or not is_financial_table(b) or len(b.amount_cols) < min_cols or i in done:
+            continue
+        # start: walk back over the heading lines that belong to this table
+        start = i
+        k = i - 1
+        while k >= 0 and blocks[k].kind == "paragraph" and (not blocks[k].text.strip() or blocks[k].role in (
+                "title", "heading", "period", "unit", "note_heading")) and i - k <= 6:
+            if blocks[k].text.strip():
+                start = k
+            k -= 1
+        # end: up to the next statement title or top-level note heading
+        end = i
+        for j in range(i + 1, len(blocks)):
+            bj = blocks[j]
+            if bj.kind == "paragraph" and (bj.role == "title" or (bj.role == "note_heading" and bj.note_number
+                                                                    and "." not in bj.note_number)):
+                break
+            if bj.kind == "paragraph" and bj.role == "heading" and bj.text.isupper() and j + 1 < len(blocks) \
+                    and blocks[j + 1].kind == "paragraph" and blocks[j + 1].role == "title":
+                break
+            end = j
+        done.update(range(start, end + 1))
+        portrait = copy.deepcopy(body_sect)
+        landscape = copy.deepcopy(body_sect)
+        pg = landscape.find(qn("w:pgSz"))
+        if pg is not None:
+            w, h = pg.get(qn("w:w")), pg.get(qn("w:h"))
+            if w and h and int(w) < int(h):
+                pg.set(qn("w:w"), h)
+                pg.set(qn("w:h"), w)
+            pg.set(qn("w:orient"), "landscape")
+        for sect, anchor, where in ((portrait, items[start]._element, "before"), (landscape, items[end]._element, "after")):
+            p = OxmlElement("w:p")
+            ppr = OxmlElement("w:pPr")
+            ppr.append(sect)
+            p.append(ppr)
+            (anchor.addprevious if where == "before" else anchor.addnext)(p)
+        # the landscape section already starts a new page
+        if blocks[start].kind == "paragraph":
+            items[start].paragraph_format.page_break_before = False
+        # wider page: give the table the landscape text width
+        tbl = items[i]._tbl
+        tw = int(w) if pg is not None and w else None
+        if tw:
+            sec = d.sections[-1]
+            text_w = int(h) - int((sec.left_margin + sec.right_margin) / 635)
+            grid = tbl.tblGrid.findall(qn("w:gridCol"))
+            old = sum(int(g.get(qn("w:w"))) for g in grid) or 1
+            for g in grid:
+                g.set(qn("w:w"), str(int(int(g.get(qn("w:w"))) * text_w / old)))
+            tblw = tbl.tblPr.find(qn("w:tblW"))
+            if tblw is not None:
+                tblw.set(qn("w:w"), str(text_w))
+            for row in tbl.tr_lst:
+                for tc, g in zip(row.tc_lst, grid):
+                    tcw = tc.get_or_add_tcPr().find(qn("w:tcW"))
+                    if tcw is not None:
+                        tcw.set(qn("w:w"), g.get(qn("w:w")))
+                        tcw.set(qn("w:type"), "dxa")
+        changes.add("Wide tables printed on landscape pages")
 
 
 def _statement_endings(d, items, blocks, settings, changes, entity):
@@ -630,11 +707,20 @@ def _format_table(t, block, settings, changes):
     amt_w = Cm(2.6) if n_amt <= 3 else max(Cm(1.8), int((tw * 0.68 - note_w) / n_amt))
     label_w = max(Cm(4), tw - note_w - amt_w * n_amt - Cm(0.01) * (w - 1 - n_amt - (1 if note is not None else 0)))
     other = [c for c in range(1, w) if c not in amount and c != note]
+    other_w = {}
     if other:
-        label_w = max(Cm(3), label_w - Cm(1.5) * len(other))
+        # text columns (relationship, nature of transaction ...) share the room by how much they hold
+        longest = {c: max([len(w_) for r in block.rows for w_ in (r.cells[c].split() if c < len(r.cells) else [])] + [4])
+                   for c in other}
+        avg = {c: sum(len(r.cells[c]) for r in block.rows if c < len(r.cells)) / max(1, len(block.rows)) for c in other}
+        room = max(Cm(3) * len(other), label_w - Cm(3.5))
+        want = {c: max(Cm(0.21) * longest[c], Cm(0.12) * avg[c], Cm(2.2)) for c in other}
+        scale = min(1.0, room / sum(want.values()))
+        other_w = {c: int(v * scale) for c, v in want.items()}
+        label_w = max(Cm(3), label_w - sum(other_w.values()))
     widths = []
     for c in range(w):
-        widths.append(label_w if c == 0 else note_w if c == note else amt_w if c in amount else Cm(1.5))
+        widths.append(label_w if c == 0 else note_w if c == note else amt_w if c in amount else other_w.get(c, Cm(1.5)))
     tbl = t._tbl
     tblpr = tbl.tblPr
     t.alignment = WD_TABLE_ALIGNMENT.LEFT
@@ -670,8 +756,10 @@ def _format_table(t, block, settings, changes):
     # decimals per amount column, from the figures as written
     decimals = {}
     for c in amount:
+        # only decimals that carry a value count: '21,437,450.00' is shown as 21,437,450
         decs = [decimals_of(r.cells[c]) for r in block.rows
-                if r.kind not in ("header",) and c < len(r.cells) and parse_amount(r.cells[c]) is not None]
+                if r.kind not in ("header",) and c < len(r.cells) and parse_amount(r.cells[c]) is not None
+                and parse_amount(r.cells[c]) != parse_amount(r.cells[c]).to_integral_value()]
         decimals[c] = max(decs) if decs else 0
 
     prev_kind = None
@@ -744,7 +832,11 @@ def _unit_banner(t, block, changes):
         if mrow.kind != "header":
             continue
         vals = [mrow.cells[c].strip() for c in cols]
-        if not vals[0] or len(set(v.lower() for v in vals)) != 1 or re.search(r"\d{4}|note", vals[0], re.I):
+        filled = [v for v in vals if v]
+        banner = len(filled) == 1 and re.fullmatch(r"[-–—\s]*\(?[A-Za-z' .]+\)?[-–—\s]*", filled[0]) and "-" in filled[0]
+        if banner:
+            vals = [re.sub(r"^[-–—\s]+|[-–—\s]+$", "", filled[0])] * len(vals)
+        elif not vals[0] or len(set(v.lower() for v in vals)) != 1 or re.search(r"\d{4}|note", vals[0], re.I):
             continue
         if not re.search(r"rupees|rs\.?|pkr|\$|usd|amount|['’]000|thousand|million", vals[0], re.I):
             continue
@@ -765,7 +857,8 @@ def _unit_banner(t, block, changes):
             para.add_run(text)
         para.runs[0].font.bold = True
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        changes.edit(f"{block.source}, row {ri + 1}", " | ".join(vals), text, "Unit heading set across the columns")
+        changes.edit(f"{block.source}, row {ri + 1}", " | ".join(filled if banner else vals), text,
+                     "Unit heading set across the columns")
         return
 
 

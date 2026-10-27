@@ -179,13 +179,42 @@ def test_casting_error_in_word(samples, tmp_path):
     assert any("total assets vs total equity and liabilities" in m for m in errs)
 
 
-def test_excel_keeps_formulas(samples, tmp_path):
+def test_excel_workbook_untouched_except_print_setup(samples, tmp_path):
+    import zipfile
     data = pipeline.run(str(samples / "fs.xlsx"), str(tmp_path), dict(FAST), progress=lambda m: None)
     wb = openpyxl.load_workbook(str(tmp_path / "fs - formatted.xlsx"))
     assert wb["SOFP"]["C10"].value == "=SUM(C8:C9)"
     assert wb["SOFP"]["C16"].value == "=C10+C15"
-    assert "(#,##0)" in wb["SOFP"]["C8"].number_format
-    assert any("formula(s) retained unchanged" in m for m in messages(data, "integrity", "passed"))
+    assert wb["SOFP"].page_setup.fitToWidth == 1 and wb["SOFP"].print_options.horizontalCentered
+    assert any("byte-for-byte unchanged" in m for m in messages(data, "integrity", "passed"))
+    with zipfile.ZipFile(samples / "fs.xlsx") as a, zipfile.ZipFile(tmp_path / "fs - formatted.xlsx") as b:
+        assert a.read("xl/styles.xml") == b.read("xl/styles.xml")
+    assert (tmp_path / "fs - financial analysis.xlsx").exists()
+
+
+def test_audit_pack_workbook(tmp_path):
+    import zipfile
+    from fsreview.extract import read_document
+    src = tmp_path / "pack.xlsx"
+    make_samples.make_audit_pack(str(src))
+    m = classify_document(read_document(str(src)))
+    assert m.sheets["statements"] == ["BS", "Notes"]
+    assert m.sheets["working"] == ["TB 2026"] and m.sheets["hidden"] == ["BS (old)"]
+    assert any("decimals that the number format hides" in w for w in m.warnings)
+    text = m.text()
+    assert "check" not in text                         # outside the print area
+    heads = [p.text for p in m.paragraphs() if p.role == "note_heading"]
+    assert "4.1 Allocation of depreciation" in heads
+    data = pipeline.run(str(src), str(tmp_path / "o"), dict(FAST, financial_year="2026"), progress=lambda m: None)
+    msgs = " | ".join(messages(data))
+    assert "'SAHRE' → 'SHARE'" in msgs
+    assert "no third column as at the beginning of the preceding period" in msgs
+    assert "the last note in the financial statements is note 4" in msgs
+    assert any("agrees at 1,750,001" in x for x in messages(data, "accounting", "passed"))
+    with zipfile.ZipFile(src) as a, zipfile.ZipFile(tmp_path / "o" / "pack - formatted.xlsx") as b:
+        media = [n for n in a.namelist() if n.startswith("xl/media/")]
+        assert media and all(a.read(n) == b.read(n) for n in media)       # the logo survives
+        assert a.read("xl/worksheets/sheet3.xml") == b.read("xl/worksheets/sheet3.xml")   # working paper
 
 
 def test_text_input(samples, tmp_path):

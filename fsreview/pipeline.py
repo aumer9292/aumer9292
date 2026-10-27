@@ -4,7 +4,7 @@ import os
 import re
 
 from . import (ai_review, analysis, checks, disclosures, docx_engine, entity, integrity, library, pdf_engine,
-               proofread, report, xlsx_engine)
+               proofread, report, xlsx_engine, xlsx_patch)
 from .classify import PRIMARY, classify_document
 from .figures import extract_figures
 from .extract import read_document, read_docx
@@ -123,7 +123,13 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
         if ext in (".xlsx", ".xlsm"):
             if ext == ".xlsm":
                 xlsx_out = xlsx_out[:-5] + ".xlsm"
-            issues += xlsx_engine.format_workbook(input_path, xlsx_out, settings, changes)
+            sheets = getattr(model, "sheets", {})
+            issues += xlsx_patch.format_workbook(input_path, xlsx_out, settings, changes,
+                                                 sheets.get("statements", []), sheets.get("working", []))
+            if sheets.get("working") or sheets.get("hidden"):
+                notes.append(f"Read as financial statements: {', '.join(sheets['statements'])}. Not read: "
+                             f"{len(sheets['working'])} working-paper sheet(s) and {len(sheets['hidden'])} hidden "
+                             "sheet(s).")
         else:
             xlsx_engine.model_to_workbook(model, xlsx_out, settings, changes)
             if ext != ".xls":
@@ -141,8 +147,19 @@ def run(input_path, out_dir, user_settings=None, reference_path=None, progress=p
     if result["ratios"] or result["horizontal"]:
         analysis.write_report(an_docx, result, chart_files, settings, years)
         outputs["Financial analysis"] = os.path.basename(an_docx)
-        if "Excel" in outputs:
+        if "Excel" in outputs and ext not in (".xlsx", ".xlsm"):
             analysis.add_to_workbook(os.path.join(out_dir, outputs["Excel"]), result, years)
+        elif "xlsx" in wanted:
+            # the client's own workbook is never re-saved: the analysis gets its own workbook
+            import openpyxl
+            an_xlsx = os.path.join(out_dir, f"{base} - financial analysis.xlsx")
+            wb = openpyxl.Workbook()
+            wb.save(an_xlsx)
+            analysis.add_to_workbook(an_xlsx, result, years)
+            wb = openpyxl.load_workbook(an_xlsx)
+            del wb[wb.sheetnames[0]]
+            wb.save(an_xlsx)
+            outputs["Analysis workbook"] = os.path.basename(an_xlsx)
     else:
         notes.append("Financial analysis skipped: the primary statements' figures could not be identified.")
 

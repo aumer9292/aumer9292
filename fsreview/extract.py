@@ -176,37 +176,43 @@ def _recalculated_copy(path):
 
 def read_xlsx(path):
     import openpyxl
-    wb = openpyxl.load_workbook(path, data_only=True)
-    blocks, warnings = [], []
-    formula_wb = openpyxl.load_workbook(path, data_only=False)
-    missing_results = any(
-        isinstance(c.value, str) and c.value.startswith("=") and wb[ws.title].cell(c.row, c.column).value is None
-        for ws in formula_wb.worksheets for row in ws.iter_rows() for c in row)
-    if missing_results:
+    from .xlsx_read import read_workbook, select_sheets
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")       # e.g. unsupported WMF logos: the images are not needed for review
+        formula_wb = openpyxl.load_workbook(path, data_only=False)
+        wb = openpyxl.load_workbook(path, data_only=True)
+    warnings = []
+    chosen, _, _ = select_sheets(formula_wb)
+    missing = 0
+    for fws, (c0, r0, c1, r1) in chosen:
+        vws = wb[fws.title]
+        for row in fws.iter_rows(min_row=r0, max_row=r1, min_col=c0, max_col=c1):
+            for c in row:
+                if isinstance(c.value, str) and c.value.startswith("=") and vws.cell(c.row, c.column).value is None:
+                    missing += 1
+    if missing:
         calc = _recalculated_copy(path)
         if calc:
-            wb = openpyxl.load_workbook(calc, data_only=True)
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                wb = openpyxl.load_workbook(calc, data_only=True)
             warnings.append("Some formulas had no saved results; the workbook was recalculated with LibreOffice "
                             "for checking. The formatted workbook keeps the original formulas.")
-    for ws in wb.worksheets:
-        fws = formula_wb[ws.title]
-        rows, missing = [], 0
-        for r_idx, row in enumerate(ws.iter_rows(), start=1):
-            vals = []
-            for c in row:
-                v = c.value
-                if v is None:
-                    f = fws.cell(row=c.row, column=c.column).value
-                    if isinstance(f, str) and f.startswith("="):
-                        missing += 1
-                vals.append(excel_value_text(v, c.number_format))
-            rows.append(vals)
-        if missing:
-            warnings.append(f"Sheet '{ws.title}': {missing} formula cell(s) have no saved result, so their "
-                            "values could not be checked. Open and save the workbook in Excel, then run again.")
-        blocks.extend(_sheet_blocks(ws.title, rows, f"sheet '{ws.title}'"))
-    return Document(blocks=blocks, source_name=os.path.basename(path), source_type="xlsx",
-                    warnings=warnings)
+        else:
+            warnings.append(f"{missing} formula cell(s) in the statements have no saved result, so their values "
+                            "could not be checked. Open and save the workbook in Excel, then run again.")
+    blocks, sheets, working, hidden, hidden_decimals = read_workbook(formula_wb, wb)
+    if hidden_decimals:
+        warnings.append(f"{len(hidden_decimals)} figure(s) in the statements carry decimals that the number format "
+                        "hides (e.g. " + ", ".join(hidden_decimals[:5]) + "). Printed lines can then fail to add up "
+                        "to printed totals by a rupee or two; wrap the figures in =ROUND(…,0).")
+    if not sheets:
+        warnings.append("No statement or note sheets were recognised. Give each a print area or a statement "
+                        "title in its first rows.")
+    doc = Document(blocks=blocks, source_name=os.path.basename(path), source_type="xlsx", warnings=warnings)
+    doc.sheets = {"statements": sheets, "working": working, "hidden": hidden}
+    return doc
 
 
 def read_xls(path):

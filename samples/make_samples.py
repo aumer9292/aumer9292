@@ -273,3 +273,73 @@ if __name__ == "__main__":
     make_xlsx(os.path.join(HERE, "sample-fs.xlsx"))
     make_txt(os.path.join(HERE, "sample-fs.txt"))
     print("Samples written to", HERE)
+
+
+def make_audit_pack(path):
+    """An Excel audit file like the ones firms keep: statements and notes with print areas, note numbers in
+    their own column, a working-paper sheet, a hidden old version and a logo image."""
+    from openpyxl.drawing.image import Image as XLImage
+    from PIL import Image as PILImage
+
+    wb = openpyxl.Workbook()
+    bs = wb.active
+    bs.title = "BS"
+    rows = [
+        ("ALPHA BUILDERS (PRIVATE) LIMITED",), ("STATEMENT OF FINANCIAL POSITION",),
+        ("AS AT JUNE 30, 2026", None, None, None, None, "Restated"), (),
+        (None, "Note", None, 2026, None, 2025), (None, None, None, "(Rupees)", None, "(Rupees)"), (),
+        ("NON-CURRENT ASSETS",),
+        ("Operating fixed assets", 4, None, 1000000.4, None, 900000.0),
+        ("CURRENT ASSETS",),
+        ("Trade receivables", 5, None, 500000.3, None, 400000.0),
+        ("Cash and bank balances", 6, None, 250000, None, 200000),
+        (None, None, None, "=D11+D12", None, "=F11+F12"),
+        ("TOTAL ASSETS", None, None, "=D9+D13", None, "=F9+F13"), (),
+        ("SAHRE CAPITAL AND RESERVES",),
+        ("Issued, subscribed and paid-up capital", 7, None, 1000000, None, 1000000),
+        ("Accumulated profit", None, None, 250000.7, None, 100000),
+        (None, None, None, "=D17+D18", None, "=F17+F18"),
+        ("CURRENT LIABILITIES",),
+        ("Creditors, accruals and other payables", 8, None, 500000, None, 400000),
+        ("TOTAL EQUITY AND LIABILITIES", None, None, "=D19+D21", None, "=F19+F21"), (),
+        ("The annexed notes from 1-9 form an integral part of these financial statements.",), (),
+        ("CHIEF EXECUTIVE", None, None, None, None, "DIRECTOR"),
+    ]
+    for r in rows:
+        bs.append(list(r))
+    for row in bs.iter_rows(min_row=9, max_row=22, min_col=4, max_col=6):
+        for c in row:
+            c.number_format = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)'
+    bs.print_area = "A1:F26"
+    bs["H9"] = "check"            # outside the print area: a working note, not part of the statement
+    logo = PILImage.new("RGB", (60, 30), (31, 78, 156))
+    logo_path = os.path.splitext(path)[0] + "-logo.png"
+    logo.save(logo_path)
+    bs.add_image(XLImage(logo_path), "H1")
+
+    notes = wb.create_sheet("Notes")
+    nrows = [
+        ("ALPHA BUILDERS (PRIVATE) LIMITED",), ("NOTES TO THE FINANCIAL STATEMENTS",),
+        ("FOR THE YEAR ENDED JUNE 30, 2026",), (),
+        (1, "LEGAL STATUS AND OPERATIONS"),
+        (None, "Alpha Builders (Private) Limited is a private limited company incorporated in Pakistan under the "
+               "Companies Act, 2017. Its registered office is in Lahore."), (),
+        (4, "OPERATING FIXED ASSETS"),
+        (4.1, "Allocation of depreciation"),
+        (None, "Cost of services", None, 60000, None, 50000),
+        (None, "Administrative expenses", None, 40000, None, 30000),
+        (None, None, None, "=D10+D11", None, "=F10+F11"),
+    ]
+    for r in nrows:
+        notes.append(list(r))
+    notes["A9"].number_format = "0.0"
+    notes.print_area = "A1:F12"
+
+    tb = wb.create_sheet("TB 2026")
+    tb.append(["Account", "Debit", "Credit"])
+    tb.append(["Cash", 250000, None])
+    old = wb.create_sheet("BS (old)")
+    old["A1"] = "STATEMENT OF FINANCIAL POSITION"
+    old.sheet_state = "hidden"
+    wb.save(path)
+    os.remove(logo_path)

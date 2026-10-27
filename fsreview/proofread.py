@@ -58,7 +58,8 @@ MISSPELLINGS = {
     "transcations": "transactions", "transation": "transaction", "untill": "until", "valuaton": "valuation",
     "wich": "which", "withold": "withhold", "witholding": "withholding", "yeild": "yield", "retaind": "retained",
     "retianed": "retained", "earnigs": "earnings", "earings": "earnings", "ernings": "earnings",
-    "begininng": "beginning", "acount": "account", "acounts": "accounts", "accouting": "accounting",
+    "begininng": "beginning", "sahre": "share", "managarial": "managerial", "defferred": "deferred",
+    "deffered": "deferred", "accurals": "accruals", "acount": "account", "acounts": "accounts", "accouting": "accounting",
     "acounting": "accounting", "accountting": "accounting", "polices": "policies", "policys": "policies",
     "estimatess": "estimates", "comparitively": "comparatively", "excluding": "excluding",
     "goodwil": "goodwill", "leaes": "leases", "lese": "lease", "loanes": "loans", "borowing": "borrowing",
@@ -149,7 +150,8 @@ def proofread(doc, settings):
                 unknown[lw] += 1
                 unknown_where.setdefault(lw, loc)
         for m in re.finditer(r"\b(\w+)\s+\1\b", text, re.I):
-            if m.group(1).lower() not in ("had", "that", "is") and not m.group(1).isdigit():
+            if m.group(1).lower() not in ("had", "that", "is") and not m.group(1).isdigit() \
+                    and not m.group(1).strip("_") == "":
                 issues.append(Issue("proofreading", "warning", f"Repeated word: '{m.group(0)}'", loc, _sec(sec),
                                     suggestion=f"Delete the second '{m.group(1)}'."))
         if re.search(r"\s[,.;:](?!\d)", text) and not re.search(r"\s\.\d", text):
@@ -158,7 +160,8 @@ def proofread(doc, settings):
         if re.search(r"[a-z][,;][A-Za-z]", text):
             issues.append(Issue("proofreading", "info", "Missing space after punctuation: “"
                                 + _snip(text, r"[a-z][,;][A-Za-z]") + "”", loc, _sec(sec)))
-        if text.count("(") != text.count(")"):
+        markers = len(re.findall(r"(?:^|\s)(?:[a-z]|[ivx]{1,4}|\d{1,2})\)\s", text))     # list items: a) b) i) 1)
+        if text.count("(") != text.count(")") - markers:
             issues.append(Issue("proofreading", "warning", "Unmatched brackets: “" + text[:80] + "”", loc, _sec(sec)))
         for m in DATE_RX.finditer(text):
             if m.group(1):
@@ -186,6 +189,8 @@ def proofread(doc, settings):
         issues.append(Issue("proofreading", "info", f"Possible spelling error: '{w}' ({n}×)", unknown_where[w],
                             suggestion="Check the spelling, or add the word to the custom dictionary."))
     issues += _consistency(doc)
+    issues += _repeated_text_different_figures(doc)
+    issues += _framework_references(doc, settings)
     issues += _years(doc, settings)
     issues += _period_dates(doc)
     return issues
@@ -323,3 +328,59 @@ def spelling_fix(text):
         fix = MISSPELLINGS.get(w.lower())
         return _match_case(w, fix) if fix else w
     return WORD_RX.sub(rep, text)
+
+
+def _repeated_text_different_figures(doc):
+    """The same sentence written twice with different amounts usually means one copy was not updated."""
+    groups = defaultdict(list)
+    for p in doc.paragraphs():
+        if len(p.text) < 80 or not re.search(r"\d{1,3}(?:,\d{3})+", p.text):
+            continue
+        key = re.sub(r"\d[\d,.]*", "#", p.text.lower())
+        key = re.sub(r"\s+", " ", key)
+        groups[key].append(p)
+    issues = []
+    for paras in groups.values():
+        figs = {tuple(re.findall(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", p.text)) for p in paras}
+        if len(paras) > 1 and len(figs) > 1:
+            shown = "; ".join(f"{p.source}: " + ", ".join(re.findall(r"\d{1,3}(?:,\d{3})+", p.text)[:4]) for p in paras[:3])
+            issues.append(Issue("consistency", "error", "The same paragraph appears more than once with different "
+                                f"figures — {shown}. “{paras[0].text[:110]}…”", suggestion="Make the figures agree "
+                                "(one copy was probably not updated)."))
+    return issues
+
+
+FRAMEWORK_NAMES = [
+    ("IFRS for SMEs", r"\bIFRS for SMEs?\b|International Financial Reporting Standard for Small and Medium"),
+    ("AFRS for SMEs (old ICAP standard)", r"\bAFRS for SMEs?\b|Accounting and (?:Financial )?Reporting Standards? for "
+                                          r"(?:the )?Small and Medium"),
+    ("AFRS for SSEs", r"\bAFRS for SSEs?\b|Accounting and (?:Financial )?Reporting Standards? for (?:the )?Small[- ]Sized"),
+    ("IFRS", r"International Financial Reporting Standards \(IFRS(?:s)?\)(?! for)|\bIFRSs? (?:as )?(?:issued|notified)"),
+]
+EXPECTED = {"PIC": "IFRS", "LSC": "IFRS", "MSC": "IFRS for SMEs", "SSC": "AFRS for SSEs"}
+
+
+def _framework_references(doc, settings):
+    cat = (settings.get("category") or "").upper()
+    issues = []
+    found = {}
+    compliance = ""
+    for p in doc.paragraphs():
+        if not compliance and re.search(r"prepared in accordance with|statement of compliance|comprise of", p.text, re.I) \
+                and any(re.search(rx, p.text, re.I) for _, rx in FRAMEWORK_NAMES):
+            compliance = p.text
+        for name, rx in FRAMEWORK_NAMES:
+            if re.search(rx, p.text, re.I):
+                found.setdefault(name, p.source)
+    if len(found) > 1:
+        issues.append(Issue("consistency", "warning", "More than one reporting framework is named in the financial "
+                            "statements: " + "; ".join(f"{n} ({src})" for n, src in found.items()),
+                            suggestion="Name one framework throughout, the one stated in the statement of compliance."))
+    if cat in EXPECTED and compliance:
+        named = [n for n, rx in FRAMEWORK_NAMES if re.search(rx, compliance, re.I)]
+        if named and EXPECTED[cat] not in named:
+            issues.append(Issue("disclosure", "error", f"The statement of compliance names {', '.join(named)}, but the "
+                                f"framework for a {cat} under the Third Schedule to the Companies Act 2017 is "
+                                f"{EXPECTED[cat]}.", suggestion="Confirm the entity category and correct the statement "
+                                "of compliance (and the policies that follow from it)."))
+    return issues

@@ -95,7 +95,9 @@ def classify_document(doc, settings=None):
     in_contents = False
     current_note = None
     tables_since_title = 0
+    prev = None
     for b in doc.blocks:
+        last, prev = prev, (b if b.kind == "table" or b.text.strip() else prev)
         if b.kind == "paragraph":
             t = b.text.strip()
             if not t:
@@ -103,6 +105,10 @@ def classify_document(doc, settings=None):
                 b.section = section
                 continue
             key = classify_title(t)
+            if key in PRIMARY and section in ("NOTES", "POLICIES", "ESTIMATES") and not (
+                    last is not None and last.kind == "paragraph" and last.role in ("heading", "title")
+                    and len(last.text) < 90 and (last.text.isupper() or last.bold)):
+                key = None      # 'Statement of Financial Position' as a heading inside a note (e.g. a restatement)
             if key == "CONTENTS_ENTRY":
                 b.role = "contents"
                 b.section = "CONTENTS"
@@ -122,8 +128,8 @@ def classify_document(doc, settings=None):
                     m = NOTE_HEADING.match(t)
                     if m:
                         b.role = "note_heading"
-                        b.note_number = m.group(1).split(".")[0]
-                        current_note = b.note_number
+                        b.note_number = m.group(1)
+                        current_note = m.group(1).split(".")[0]
                 b.section = section
                 tables_since_title = 0
                 continue
@@ -231,11 +237,19 @@ def analyse_table(t):
                     and not t.unit_label:
                 if not YEAR.match(r.cells[c].strip()):
                     t.unit_label = r.cells[c].strip()
+    text_cols = [c for c in range(w) if c not in amount_cols and c != note_col]
     for i, r in enumerate(t.rows):
-        label = r.cells[label_col].strip()
+        # the label is the first text in the row (a related-party table describes each line in its 2nd column)
+        label = r.cells[label_col].strip() or next((r.cells[c].strip() for c in text_cols if r.cells[c].strip()), "")
         r.label = label
         has_amt = any(is_amount(r.cells[c]) and not (i < first_data and YEAR.match(r.cells[c].strip()))
                       for c in amount_cols)
+        if has_amt and all(YEAR.match(r.cells[c].strip()) for c in amount_cols if r.cells[c].strip()):
+            r.kind = "heading"       # a '2025' sub-heading inside a note table, not a figure
+            continue
+        if has_amt and re.search(r"\bnumber of\b|\bno\. of\b|\bpersons\b|\bemployees\b|\brate\b|%$", label, re.I):
+            r.kind = "info"          # a count or rate: never added into totals
+            continue
         if i < first_data and not has_amt:
             r.kind = "header" if any(r.cells[c].strip() for c in range(1, w)) or i < first_data else "heading"
             if not any(r.cells[c].strip() for c in range(1, w)) and label and i > 0:
@@ -253,8 +267,11 @@ def analyse_table(t):
                 r.kind = "subtotal"
             else:
                 r.kind = "item"
-        elif GRAND_TOTAL.search(label):
+        elif GRAND_TOTAL.search(label) and not (t.section in ("NOTES", "POLICIES", "ESTIMATES")
+                                                and re.match(r"^balance", label, re.I)):
             r.kind = "grand_total"
+        elif t.section in ("NOTES", "POLICIES", "ESTIMATES") and re.match(r"^balance (?:as )?at", label, re.I):
+            r.kind = "total"         # balances in a movement schedule: single rule, not the double grand-total rule
         elif TOTAL.search(label) or (not label and has_amt):
             r.kind = "total"
         elif r.bold and has_amt and label:
