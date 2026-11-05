@@ -527,6 +527,53 @@ for t in ["Conclusion & ISA 540 matters:",
           "4. Below-market element: PMIC is a government-sponsored apex lender – consider whether the benefit is a government grant (IAS 20.10A) rather than a gain; the measurement of the liability is the same, presentation of the credit differs. Document judgement.",
           "5. Consequential: FY2026 finance cost on EIR basis is materially higher than the coupon; the net equity effect at 30-Jun-26 is shown in PF."]:
     put(md, f"A{r}", t, bold=t.endswith(":")); r += 1
+r += 1
+section(md, f"A{r}", "G. How amortised cost works – explanation of the mechanics (IFRS 9 4.2.1, 5.1.1, App. A 'effective interest method')")
+for c in range(2, 15): md[f"{CL(c)}{r}"].fill = GREY
+r += 1
+expl = [
+    "Step 1 – Day one: ALL future contractual cash flows of the new loan (Schedule B principal instalments AND markup) are discounted to present value. The discount rate is the MARKET rate, not the contract rate, because the novation creates a NEW loan that must be recognised at fair value (IFRS 9 5.1.1).",
+    "Step 2 – That present value is the opening carrying amount. The difference from the old carrying amount (Rs 148.75m) is the gain on extinguishment (section D / AJE b).",
+    "Step 3 – Each period: EIR interest = opening carrying amount × EIR (= market rate, as no fees were paid; any fees would change the EIR – B3.3.6A / B5.4.1-B5.4.3). This is the finance cost charged to P&L.",
+    "Step 4 – Closing carrying amount = opening + EIR interest – cash paid (markup + principal). When the coupon is below the EIR the unpaid part of the interest is added to the loan, so the carrying amount INCREASES; principal repayments reduce it.",
+    "Step 5 – By the final instalment (30-Sep-2030) the carrying amount unwinds to exactly nil (check in col S). The total EIR interest over the life = total cash paid – initial fair value.",
+]
+for t in expl:
+    put(md, f"B{r}", t, wrap=True); md.merge_cells(f"B{r}:N{r}")
+    md.row_dimensions[r].height = 30
+    r += 1
+r += 1
+thead(md, r, ["", "FY2026 quarter", "", "", "Opening carrying (Rs)", "", "EIR interest – P&L (Rs)", "", "Cash markup (Rs)", "", "", "Closing carrying (Rs)", "", "Comment"])
+r += 1
+G0 = r
+qnames = ["Jul–Sep 2025", "Oct–Dec 2025", "Jan–Mar 2026", "Apr–Jun 2026"]
+qcom = ["Carrying FALLS: old-rate coupon (14.5% on Rs 148.75m) exceeds EIR (15% on fair value)",
+        "Carrying RISES: 3% coupon < 15% EIR – shortfall added to the loan",
+        "Carrying RISES – as above", "Carrying RISES – closing = amortised cost at 30-Jun-26"]
+for i in range(4):
+    sr = first + i
+    put(md, f"B{r}", qnames[i])
+    put(md, f"E{r}", f"=P{sr}", fmt=NUM); put(md, f"G{r}", f"=Q{sr}", fmt=NUM)
+    put(md, f"I{r}", f"=R{sr}", fmt=NUM); put(md, f"L{r}", f"=S{sr}", fmt=NUM)
+    put(md, f"N{r}", qcom[i], wrap=True); md.row_dimensions[r].height = 28
+    r += 1
+put(md, f"B{r}", "FY2026 total", bold=True)
+put(md, f"E{r}", f"=E{G0}", fmt=NUM, bold=True, border=DBL)
+put(md, f"G{r}", f"=SUM(G{G0}:G{r-1})", fmt=NUM, bold=True, border=DBL)
+put(md, f"I{r}", f"=SUM(I{G0}:I{r-1})", fmt=NUM, bold=True, border=DBL)
+put(md, f"L{r}", f"=L{r-1}", fmt=NUM, bold=True, border=DBL)
+put(md, f"N{r}", f'=IF(ABS(E{r}+G{r}-I{r}-L{r})<1,"✓ opening + interest – cash = closing","✗")', bold=True)
+r += 1
+put(md, f"B{r}", "Interest not paid in cash, added to the loan = AJE (d): Dr Finance cost / Cr Financing")
+put(md, f"L{r}", f"=G{r-1}-I{r-1}", fmt=NUM, bold=True)
+put(md, f"N{r}", f'=IF(ABS(L{r}-{AJE_D})<1,"✓ = AJE (d) in PF","✗")', bold=True)
+r += 1
+put(md, f"B{r}", "Unamortised discount at 30-Jun-26 = nominal Rs 148.75m – closing carrying (shown in Lead, column 'AJE (b)+(d)')")
+put(md, f"L{r}", f"={I['FS_TOT']}-L{r-2}", fmt=NUM, bold=True)
+put(md, f"N{r}", f'=IF(ABS(L{r}-L{F0+6})<1,"✓ = section F","✗")', bold=True)
+r += 2
+put(md, f"B{r}", "Conclusion: under IFRS 9 the PMIC loan is carried at amortised cost of the amount in section F, not at the nominal Rs 148.75m; FY2026 finance cost is the EIR interest above, not the 3% coupon. AJE (d) applies only if AJE (b) (derecognition at fair value) is accepted.", bold=True, wrap=True)
+md.merge_cells(f"B{r}:N{r}"); md.row_dimensions[r].height = 30
 md.freeze_panes = f"C{hdr+1}"
 
 # ===================================================================== A5 covenants
